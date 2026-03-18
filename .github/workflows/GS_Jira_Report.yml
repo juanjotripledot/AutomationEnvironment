@@ -1,9 +1,14 @@
+
 name: Generate Jira Metrics Report
 
 on:
   schedule:
     - cron: '0 18 * * 5' # Runs at 18:00 every Friday (UTC)
-  workflow_dispatch:     # Allows you to trigger the run manually from the UI
+  workflow_dispatch:     
+
+# Add this block to force Node 24 and hide the deprecation warnings
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   run-jira-report:
