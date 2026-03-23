@@ -21,6 +21,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION — Read from GitHub Secrets (Environment Variables)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -79,6 +81,9 @@ HEADERS = [
     "Description",
     "Comments",
     "Changelog (JSON)",
+    "Linked Items",
+    "Parent",
+    "Depends on",
     "Time in Refinement",
     "Time in Analysis",
     "Time in Need Info",
@@ -306,7 +311,7 @@ def fetch_changelog(key):
 def fetch_issue_fields(key):
     url  = f"{JIRA_BASE_URL}/rest/api/3/issue/{key}"
     data = _get(url, params={
-        "fields": "summary,customfield_10023,components,labels,assignee,description,comment"
+        "fields": "summary,customfield_10023,components,labels,assignee,description,comment,parent,issuelinks"
     })
     return (data or {}).get("fields", {})
 
@@ -460,6 +465,48 @@ def process_issue(basic_issue):
         description = _adf_to_text(desc_obj) if isinstance(desc_obj, dict) else (desc_obj or "")
         comments    = build_comments_json(fields)
 
+        current_project_key = key.split("-")[0] if "-" in key else ""
+        depends_on_projects = set()
+
+        # Extract Parent
+        parent_key = ""
+        parent_field = fields.get("parent")
+        if parent_field:
+            parent_key = parent_field.get("key", "")
+            if parent_key:
+                parent_proj = parent_key.split("-")[0]
+                if parent_proj and parent_proj != current_project_key:
+                    depends_on_projects.add(parent_proj)
+
+        # Extract Linked Items
+        linked_items_list = []
+        issue_links = fields.get("issuelinks", [])
+        for link in issue_links:
+            link_type_name = link.get("type", {}).get("name", "")
+            if "inwardIssue" in link:
+                linked_issue = link["inwardIssue"]
+                direction = link.get("type", {}).get("inward", link_type_name)
+            elif "outwardIssue" in link:
+                linked_issue = link["outwardIssue"]
+                direction = link.get("type", {}).get("outward", link_type_name)
+            else:
+                continue
+            
+            linked_key = linked_issue.get("key", "")
+            linked_items_list.append({
+                "relationship": direction,
+                "key": linked_key,
+                "summary": (linked_issue.get("fields") or {}).get("summary", ""),
+                "status": ((linked_issue.get("fields") or {}).get("status") or {}).get("name", "")
+            })
+            if linked_key:
+                linked_proj = linked_key.split("-")[0]
+                if linked_proj and linked_proj != current_project_key:
+                    depends_on_projects.add(linked_proj)
+                    
+        linked_items_json = json.dumps(linked_items_list, ensure_ascii=False)
+        depends_on_str = ", ".join(sorted(list(depends_on_projects)))
+
         histories      = fetch_changelog(key)
         changelog_json = build_changelog_json(histories)
 
@@ -475,6 +522,9 @@ def process_issue(basic_issue):
             description,
             comments,
             changelog_json,
+            linked_items_json,
+            parent_key,
+            depends_on_str,
         ]
 
         for header in HEADERS[FIRST_STATUS_COL: FIRST_STATUS_COL + len(STATUS_HEADER_MAP)]:
@@ -549,6 +599,9 @@ def build_workbook(rows):
         7: 55,   # Description
         8: 55,   # Comments
         9: 60,   # Changelog (JSON)
+        10: 60,  # Linked Items
+        11: 16,  # Parent
+        12: 24,  # Depends on
     }
     for col in range(1, len(HEADERS) + 1):
         ws.column_dimensions[get_column_letter(col)].width = widths.get(col, 20)
@@ -557,6 +610,8 @@ def build_workbook(rows):
     ws.auto_filter.ref = ws.dimensions
 
     return wb
+
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -610,6 +665,6 @@ def main():
     log.info("=== Finished in %.1fs ===", elapsed)
     print(f"\n  Report saved to: {OUTPUT_PATH}")
     print(f"    {len(rows)} tickets  |  {elapsed:.0f}s total\n")
-    
+
 if __name__ == "__main__":
     main()
