@@ -1,0 +1,40 @@
+name: Generate Jira Metrics Report
+
+on:
+  schedule:
+    - cron: '0 0 1 1 *' # Runs once per year to keep the cron action
+  workflow_dispatch:     
+
+# Add this block to force Node 24 and hide the deprecation warnings
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  run-jira-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests openpyxl
+          
+      - name: Run Jira Report Script
+        env:
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: python NO_PS_jira_ticket_report.py
+        
+      - name: Upload Excel Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: NO_PS_jira_year_report
+          path: NO_PS_jira_year_report.xlsx
+          retention-days: 7
