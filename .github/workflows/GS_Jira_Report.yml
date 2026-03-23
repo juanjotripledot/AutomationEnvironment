@@ -3,7 +3,7 @@ name: Generate Jira Metrics Report
 
 on:
   schedule:
-  #  - cron: '0 0 1 1' # Runs once per year to keep the cron action
+  #  - cron: '0 0 1 1 *' # Runs once per year to keep the cron action
   workflow_dispatch:     
 
 # Add this block to force Node 24 and hide the deprecation warnings
