@@ -213,7 +213,7 @@ def fetch_all_issues():
     Page through every issue matching the JQL using /rest/api/3/search/jql.
     """
     jql = (
-        'project in ("LO") AND (LABELS NOT IN (NoKPI) OR LABELS = EMPTY) AND issuetype not in (Documentation,Epic) '
+        'project in ("LOST") AND (LABELS NOT IN (NoKPI) OR LABELS = EMPTY) AND issuetype not in (Documentation,Epic) '
         'AND updated >= -365d '
         'ORDER BY updated DESC'
     )
