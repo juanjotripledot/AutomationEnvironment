@@ -94,8 +94,8 @@ STATUS_HEADER_MAP = {
     "Time in In QA": "In QA",
 }
 
-# 0-based index of "Time in Refinement" in HEADERS
-FIRST_STATUS_COL = HEADERS.index("Time in Refinement")
+# 0-based index of "Time in In Progress" in HEADERS
+FIRST_STATUS_COL = HEADERS.index("Time in In Progress")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # LOGGING
