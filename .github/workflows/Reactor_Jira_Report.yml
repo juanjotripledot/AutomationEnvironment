@@ -37,5 +37,4 @@ jobs:
         with:
           name: Reactor_jira_year_report
           path: Reactor_jira_year_report.xlsx
-          compression-level: 0
           retention-days: 7
