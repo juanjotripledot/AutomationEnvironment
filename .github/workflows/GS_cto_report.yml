@@ -61,8 +61,8 @@ jobs:
                   username: ${{ secrets.MAIL_USERNAME }}
                   password: ${{ secrets.MAIL_PASSWORD }}
                   subject: "GS CTO Report - ${{ github.event.inputs.month || 'Monthly' }}"
-                  to: cto@tripledotstudios.com
-                  from: reports@tripledotstudios.com
+                  to: juanjo.suarez@tripledotstudios.com
+                  from: juanjo.suarez@tripledotstudios.com
                   attachments: GS_CTO_Report_*.pdf
                   body: "Please find attached the monthly GameServer performance report."
           
