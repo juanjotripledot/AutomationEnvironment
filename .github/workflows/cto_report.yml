@@ -1,0 +1,61 @@
+name: CTO Monthly Performance Report
+
+on:
+  # Runs automatically on the 1st of every month at 8:00 AM UTC
+  schedule:
+    - cron: '0 8 1 * *'
+  # Also allows manual trigger from the Actions tab
+  workflow_dispatch:
+    inputs:
+      month:
+        description: 'Report month (e.g. 2026-02)'
+        required: false
+        default: ''
+
+jobs:
+  generate-report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install openpyxl matplotlib reportlab Pillow requests
+
+      - name: Generate Jira XLSX export
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          python jira_export.py
+
+      - name: Unzip Jira export
+        run: |
+          unzip -o GS_jira_year_report.zip -d .
+
+      - name: Generate CTO PDF report
+        run: |
+          MONTH="${{ github.event.inputs.month }}"
+          if [ -z "$MONTH" ]; then
+            MONTH=$(date +%Y-%m)
+          fi
+          python gs_cto_report.py \
+            --xlsx GS_jira_year_report.xlsx \
+            --mapping GamesStudios.csv \
+            --output GS_CTO_Report_${MONTH}.pdf \
+            --month "$MONTH"
+
+      - name: Upload PDF as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CTO-Report-${{ github.run_id }}
+          path: GS_CTO_Report_*.pdf
+          retention-days: 90
