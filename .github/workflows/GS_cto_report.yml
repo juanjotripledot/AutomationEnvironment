@@ -39,7 +39,7 @@ jobs:
 
       - name: Unzip Jira export
         run: |
-          unzip -o GS_jira_year_report.zip -d .
+          unzip -o GS_jira_year_report -d .
 
       - name: Generate CTO PDF report
         run: |
