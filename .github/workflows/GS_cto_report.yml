@@ -52,19 +52,6 @@ jobs:
             --mapping GamesStudios.csv \
             --output GS_CTO_Report_${MONTH}.pdf \
             --month "$MONTH"
-
-        - name: Email report
-                uses: dawidd6/action-send-mail@v3
-                with:
-                  server_address: smtp.gmail.com
-                  server_port: 465
-                  username: ${{ secrets.MAIL_USERNAME }}
-                  password: ${{ secrets.MAIL_PASSWORD }}
-                  subject: "GS CTO Report - ${{ github.event.inputs.month || 'Monthly' }}"
-                  to: juanjo.suarez@tripledotstudios.com
-                  from: juanjo.suarez@tripledotstudios.com
-                  attachments: GS_CTO_Report_*.pdf
-                  body: "Please find attached the monthly GameServer performance report."
           
       - name: Upload PDF as artifact
         uses: actions/upload-artifact@v4
