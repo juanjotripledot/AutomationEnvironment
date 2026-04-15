@@ -35,11 +35,7 @@ jobs:
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
         run: |
-          python GS_jira_ticket_report.py
-
-      - name: Unzip Jira export
-        run: |
-          unzip -o GS_jira_year_report -d .
+          python GS_jira_ticket_report.py      
 
       - name: Generate CTO PDF report
         run: |
