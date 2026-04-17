@@ -127,13 +127,24 @@ def quarterly_label(d: date) -> str:
     return f"{yy}Q{q}"
 
 
+def last_completed_month_end(ref: date) -> date:
+    """Return the last day of the month before ref's month.
+    e.g. ref=2026-02-01 → 2026-01-31
+         ref=2026-04-17 → 2026-03-31
+    """
+    return date(ref.year, ref.month, 1) - timedelta(days=1)
+
+
 def last_n_biweekly_labels(n: int, ref: date = None) -> list:
-    """Return last n distinct biweekly ISO-week labels going back from ref."""
+    """Return last n distinct biweekly ISO-week labels ending at last completed month.
+    Walks back week by week from the last day of the previous month.
+    """
     if ref is None:
         ref = date.today()
+    anchor = last_completed_month_end(ref)
     labels = []
     seen = set()
-    d = ref
+    d = anchor
     while len(labels) < n:
         lbl = iso_week_biweekly_label(d)
         if lbl not in seen:
@@ -144,23 +155,30 @@ def last_n_biweekly_labels(n: int, ref: date = None) -> list:
 
 
 def last_n_monthly_labels(n: int, ref: date = None) -> list:
+    """Return last n monthly labels ending at last completed month.
+    e.g. ref=2026-04-17, n=10 → ['25M07','25M08',...,'26M03']
+    """
     if ref is None:
         ref = date.today()
+    # anchor = last day of previous month
+    anchor = last_completed_month_end(ref)
     labels = []
-    for i in range(n - 1, -1, -1):
-        d = date(ref.year, ref.month, 1) - timedelta(days=1)
-        for _ in range(i):
-            d = date(d.year, d.month, 1) - timedelta(days=1)
-        labels.append(monthly_label(d))
+    d = date(anchor.year, anchor.month, 1)
+    for _ in range(n):
+        labels.insert(0, monthly_label(d))
+        d = date(d.year, d.month, 1) - timedelta(days=1)  # go to prev month
+        d = date(d.year, d.month, 1)
     return labels
 
 
 def last_n_quarterly_labels(n: int, ref: date = None) -> list:
+    """Return last n quarterly labels ending at last completed quarter."""
     if ref is None:
         ref = date.today()
+    anchor = last_completed_month_end(ref)
     labels = []
-    d = ref
     seen = set()
+    d = anchor
     while len(labels) < n:
         lbl = quarterly_label(d)
         if lbl not in seen:
@@ -927,18 +945,23 @@ def main():
     )
     args = parser.parse_args()
 
-    # Determine report month label
+    # Determine report month label and ref_date
+    # ref_date must be the first day of the month AFTER the report month,
+    # so that last_completed_month_end(ref_date) == last day of report month.
     if args.month:
         try:
             dt = datetime.strptime(args.month, "%Y-%m")
             report_month = dt.strftime("%B %Y")
-            ref_date = dt.date()
+            # ref = first day of the month after the report month
+            next_month = dt.month % 12 + 1
+            next_year  = dt.year + (1 if dt.month == 12 else 0)
+            ref_date   = date(next_year, next_month, 1)
         except ValueError:
             report_month = args.month
             ref_date = date.today()
     else:
-        ref_date = date.today()
-        report_month = ref_date.strftime("%B %Y")
+        ref_date     = date.today()
+        report_month = last_completed_month_end(ref_date).strftime("%B %Y")
 
     print(f"\nGS CTO Report Generator")
     print(f"  Report month : {report_month}")
