@@ -445,7 +445,7 @@ def make_histogram(day_values, title, figsize=(5, 3)):
     fig, ax = _init_fig(figsize)
 
     if not day_values:
-        ax.text(0.5, 0.5, "Sin datos", transform=ax.transAxes,
+        ax.text(0.5, 0.5, "No data", transform=ax.transAxes,
                 ha="center", va="center", fontsize=10, color="#a09e98")
         ax.set_title(title, fontsize=9, pad=4, color="#1a1917")
         ax.set_xticks([])
@@ -469,8 +469,8 @@ def make_histogram(day_values, title, figsize=(5, 3)):
     ax.yaxis.set_major_locator(mticker.MaxNLocator(integer=True))
     ax.tick_params(axis="y", labelsize=8)
     ax.set_title(title, fontsize=9, pad=4, color="#1a1917")
-    ax.set_xlabel("Días laborables", fontsize=8, color="#6b6860")
-    ax.set_ylabel("Nº de tickets", fontsize=8, color="#6b6860")
+    ax.set_xlabel("Working days", fontsize=8, color="#6b6860")
+    ax.set_ylabel("Number of tickets", fontsize=8, color="#6b6860")
     return _save_fig(fig, title)
 
 
@@ -534,7 +534,7 @@ def make_donut(labels, values, colors_list, title, figsize=(4, 3.2)):
     fig.patch.set_facecolor(BG)
     total = sum(values)
     if total == 0:
-        ax.text(0.5, 0.5, "Sin datos", transform=ax.transAxes,
+        ax.text(0.5, 0.5, "No data", transform=ax.transAxes,
                 ha="center", va="center", fontsize=10, color="#a09e98")
         ax.set_title(title, fontsize=9, pad=4, color="#1a1917")
         ax.axis("off")
@@ -586,7 +586,7 @@ def build_pdf(xlsx_tickets: list, agg: dict, target_start: date, target_end: dat
         canvas.drawRightString(W - 1.8 * cm, H - 0.8 * cm, report_month)
         canvas.setFont("Helvetica", 7)
         canvas.setFillColor(TEXT_MID)
-        canvas.drawCentredString(W / 2, 0.8 * cm, f"Página {doc.page}")
+        canvas.drawCentredString(W / 2, 0.8 * cm, f"Page {doc.page}")
         canvas.restoreState()
 
     doc.addPageTemplates([PageTemplate(id="main", frames=[frame], onPage=header_footer)])
@@ -640,23 +640,22 @@ def build_pdf(xlsx_tickets: list, agg: dict, target_start: date, target_end: dat
         ]))
         story.append(t)
 
-    # ── Página 1 — Portada ────────────────────────────────────────────────────
+    # ── Page 1 — Cover ────────────────────────────────────────────────────────
     story.append(Spacer(1, 3 * cm))
     story.append(Paragraph("Game Server Report", cover_title_style))
     story.append(Paragraph(f"{report_month} · Metrics", cover_sub_style))
     story.append(Spacer(1, 1 * cm))
     story.append(Paragraph(
-        "Este informe presenta una visión global de las métricas clave del "
-        "equipo de GameServer, permitiendo una comprensión detallada de cómo "
-        "se está avanzando con respecto a los objetivos. Se organiza en "
-        "secciones que cubren el tiempo dedicado al desarrollo, el tiempo en "
-        "QA, la velocidad del equipo y la distribución de esfuerzo entre "
-        "estudios y juegos.",
+        "This report provides a comprehensive overview of the GameServer team's "
+        "key performance metrics, enabling an in-depth understanding of how we are "
+        "progressing against our objectives. It is organised into sections covering "
+        "time spent in development, time spent in QA, team velocity, and effort "
+        "distribution across studios and games.",
         intro_style
     ))
     story.append(Spacer(1, 0.4 * cm))
     story.append(Paragraph(
-        f"<b>Período analizado:</b> {target_start.isoformat()} → {target_end.isoformat()}",
+        f"<b>Period analysed:</b> {target_start.isoformat()} → {target_end.isoformat()}",
         intro_style
     ))
     story.append(PageBreak())
@@ -689,14 +688,14 @@ def build_pdf(xlsx_tickets: list, agg: dict, target_start: date, target_end: dat
                   for sp in SP_VALID}
         return bw_avg, m_avg
 
-    # ── Página 2 — Time in Development ────────────────────────────────────────
+    # ── Page 2 — Time in Development ──────────────────────────────────────────
     story.append(Paragraph("Time in Development", title_style))
     story.append(Paragraph(
-        "Promedio de días laborables que los tickets pasan en desarrollo "
-        "(Re-Opened + In Progress + Code Review), agrupado por puntos de historia. "
-        f"Período del ticket determinado por la fecha de 'Verified for Production'. "
-        f"Columna izquierda: últimos {PERIODS_BACK_BIWEEKLY} períodos bisemanales. "
-        f"Columna derecha: últimos {PERIODS_BACK_MONTHLY} meses.",
+        "Average working days tickets spend in development "
+        "(Re-Opened + In Progress + Code Review), grouped by story points. "
+        f"Ticket period determined by the 'Verified for Production' date. "
+        f"Left column: last {PERIODS_BACK_BIWEEKLY} biweekly periods. "
+        f"Right column: last {PERIODS_BACK_MONTHLY} months.",
         note_style
     ))
 
@@ -705,22 +704,22 @@ def build_pdf(xlsx_tickets: list, agg: dict, target_start: date, target_end: dat
         bw_vals = [dev_bw[sp].get(l) for l in agg["bw_labels"]]
         m_vals  = [dev_m[sp].get(l)  for l in agg["m_labels"]]
         p_bw = make_bar_chart(agg["bw_labels"], bw_vals,
-                              f"Time in Dev – {sp} SP / 2 semanas",
-                              "Días laborables (media)", figsize=(4.8, 2.3))
+                              f"Time in Dev – {sp} SP / 2 weeks",
+                              "Working days (avg)", figsize=(4.8, 2.3))
         p_m  = make_bar_chart(agg["m_labels"], m_vals,
-                              f"Time in Dev – {sp} SP / Mes",
-                              "Días laborables (media)", figsize=(4.8, 2.3))
+                              f"Time in Dev – {sp} SP / Month",
+                              "Working days (avg)", figsize=(4.8, 2.3))
         two_charts(p_bw, p_m)
     story.append(PageBreak())
 
-    # ── Página 3 — Time in QA ─────────────────────────────────────────────────
+    # ── Page 3 — Time in QA ───────────────────────────────────────────────────
     story.append(Paragraph("Time in QA", title_style))
     story.append(Paragraph(
-        "Promedio de días laborables que los tickets pasan en QA "
-        "(Staging + In QA), agrupado por puntos de historia. "
-        f"Período del ticket determinado por la fecha de 'Verified for Production'. "
-        f"Columna izquierda: últimos {PERIODS_BACK_BIWEEKLY} períodos bisemanales. "
-        f"Columna derecha: últimos {PERIODS_BACK_MONTHLY} meses.",
+        "Average working days tickets spend in QA "
+        "(Staging + In QA), grouped by story points. "
+        f"Ticket period determined by the 'Verified for Production' date. "
+        f"Left column: last {PERIODS_BACK_BIWEEKLY} biweekly periods. "
+        f"Right column: last {PERIODS_BACK_MONTHLY} months.",
         note_style
     ))
 
@@ -729,20 +728,20 @@ def build_pdf(xlsx_tickets: list, agg: dict, target_start: date, target_end: dat
         bw_vals = [qa_bw[sp].get(l) for l in agg["bw_labels"]]
         m_vals  = [qa_m[sp].get(l)  for l in agg["m_labels"]]
         p_bw = make_bar_chart(agg["bw_labels"], bw_vals,
-                              f"Time in QA – {sp} SP / 2 semanas",
-                              "Días laborables (media)", figsize=(4.8, 2.3))
+                              f"Time in QA – {sp} SP / 2 weeks",
+                              "Working days (avg)", figsize=(4.8, 2.3))
         p_m  = make_bar_chart(agg["m_labels"], m_vals,
-                              f"Time in QA – {sp} SP / Mes",
-                              "Días laborables (media)", figsize=(4.8, 2.3))
+                              f"Time in QA – {sp} SP / Month",
+                              "Working days (avg)", figsize=(4.8, 2.3))
         two_charts(p_bw, p_m)
     story.append(PageBreak())
 
     # ── Página 4 — Team Velocity ──────────────────────────────────────────────
     story.append(Paragraph("Team Velocity", title_style))
     story.append(Paragraph(
-        "Suma de story points de los tickets que alcanzaron 'Verified for Production'. "
-        f"Últimos {PERIODS_BACK_BIWEEKLY} períodos bisemanales (izq) y "
-        f"{PERIODS_BACK_MONTHLY} meses (der). Anclado al último mes completo.",
+        "Sum of story points of tickets that reached 'Verified for Production'. "
+        f"Last {PERIODS_BACK_BIWEEKLY} biweekly periods (left) and "
+        f"{PERIODS_BACK_MONTHLY} months (right). Anchored to the last completed month.",
         note_style
     ))
     bw_vel_vals = [agg["bw_vel"].get(l, 0) for l in agg["bw_labels"]]
@@ -756,11 +755,11 @@ def build_pdf(xlsx_tickets: list, agg: dict, target_start: date, target_end: dat
     two_charts(p_bw, p_mo)
     story.append(PageBreak())
 
-    # ── Página 5 — Effort Distribution ────────────────────────────────────────
+    # ── Page 5 — Effort Distribution ──────────────────────────────────────────
     story.append(Paragraph("Effort Distribution", title_style))
     story.append(Paragraph(
-        "Story points liberados por estudio y por juego. "
-        f"Últimos {PERIODS_BACK_MONTHLY} meses y {PERIODS_BACK_QUARTERLY} trimestres.",
+        "Story points released per studio and per game. "
+        f"Last {PERIODS_BACK_MONTHLY} months and {PERIODS_BACK_QUARTERLY} quarters.",
         note_style
     ))
 
@@ -864,3 +863,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
