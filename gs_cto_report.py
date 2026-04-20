@@ -1,39 +1,43 @@
 """
-GS CTO Monthly Performance Report Generator
-============================================
-Reads GS_jira_year_report.xlsx (extracted from GS_jira_year_report.zip)
-and produces a PDF report replicating the monthly CTO deck:
+GS CTO Monthly Performance Report
+=================================
+Genera un PDF con 5 páginas replicando el informe mensual del CTO:
 
-  Page 1 – Cover
-  Page 2 – Time in Development  (histogram: tickets count per rounded days, 3/5/8/13 SP × 2-week + monthly)
-  Page 3 – Time in QA           (histogram: tickets count per rounded days, 3/5/8/13 SP × 2-week + monthly)
-  Page 4 – Velocity             (sum SP verified for production × 2-week + monthly)
-  Page 5 – Effort Distribution  (story points by studio & game × monthly + quarterly)
+  Página 1 - Portada + Introducción
+  Página 2 - Time in Development (histogramas 3/5/8/13 SP)
+  Página 3 - Time in QA          (histogramas 3/5/8/13 SP)
+  Página 4 - Team Velocity        (líneas bisemanal + mensual)
+  Página 5 - Effort Distribution  (donut global + barras mensuales y trimestrales
+                                    por estudio y por juego)
 
-Usage
------
-  python gs_cto_report.py \
-      --xlsx  GS_jira_year_report.xlsx \
-      --mapping GamesStudios.xlsx \
-      --output  202602_Team_Velocity.pdf \
-      [--month 2026-02]
+Definiciones:
+  Time in Dev = Time in Re-Opened + Time in In Progress + Time in Code Review
+  Time in QA  = Time in Staging + Time in In QA
+  Los valores de la planilla están en HORAS laborables → se dividen entre 8.
 
-Environment variables (alternative to --mapping):
-  MAPPING_SHEET_ID   Google Sheets ID for the GamesStudios mapping sheet
-                     (requires GOOGLE_API_KEY or service-account credentials)
+Período de referencia para Dev/QA/Velocity:
+  Fecha de "Verified for Production" del ticket.
 
-Dependencies
-------------
-  pip install openpyxl matplotlib reportlab requests
+Las páginas 4 y 5 toman las últimas 10 etiquetas bisemanales/mensuales y 8
+trimestrales, ancladas al último mes completo (mes anterior a la ejecución).
+
+Uso:
+  python gs_cto_report.py \\
+      --xlsx GS_jira_year_report.xlsx \\
+      --mapping GameStudios.csv \\
+      --output GS_CTO_Report.pdf \\
+      [--month 2026-03]
+
+Dependencias:
+  pip install openpyxl matplotlib reportlab Pillow
 """
 
 import argparse
+import csv
 import json
-import math
-import os
 import sys
 from collections import defaultdict
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 import matplotlib
 matplotlib.use("Agg")
@@ -42,73 +46,87 @@ import matplotlib.ticker as mticker
 import openpyxl
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.platypus import (
-    BaseDocTemplate, Frame, PageTemplate, Paragraph,
-    Spacer, Image, Table, TableStyle, NextPageTemplate, PageBreak
+    BaseDocTemplate, Frame, PageTemplate, Paragraph, Spacer,
+    Image, Table, TableStyle, PageBreak
 )
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
-# ─── Constants ────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Constantes
+# ══════════════════════════════════════════════════════════════════════════════
 
 SP_VALID = {3, 5, 8, 13}
 
-DEV_STATUSES = {
-    "In Progress",
-    "Re-Opened",
-    "Code Review",
-    "Deployed on Feature branch",
-    "In QA feature branch",
-    "Verified on feature branch",
+DEV_COLUMNS = {
+    "TIME IN RE-OPENED",
+    "TIME IN IN PROGRESS",
+    "TIME IN CODE REVIEW",
 }
 
-QA_STATUSES = {"Staging", "In QA"}
-
-PERIODS_BACK = 10        # how many biweekly / monthly periods to show
-OUTLIER_IQR_MULT = 2.5   # IQR multiplier for outlier detection
-
-PALETTE = {
-    "blue":   "#1e6fc9",
-    "green":  "#2da06e",
-    "amber":  "#e8a020",
-    "red":    "#e84c30",
-    "purple": "#8b4fc9",
-    "teal":   "#26b3b3",
-    "pink":   "#c94f8b",
-    "olive":  "#6b8e23",
-    "brown":  "#a07050",
-    "gray":   "#888780",
+QA_COLUMNS = {
+    "TIME IN STAGING",
+    "TIME IN IN QA",
 }
-SP_COLORS = {3: PALETTE["blue"], 5: PALETTE["green"],
-             8: PALETTE["amber"], 13: PALETTE["red"]}
-STUDIO_COLORS = list(PALETTE.values())
-GAME_COLORS   = list(PALETTE.values())
 
-# ─── Date helpers ─────────────────────────────────────────────────────────────
+COL_KEY            = "KEY"
+COL_STORY_POINTS   = "STORY POINTS"
+COL_COMPONENTS     = "COMPONENTS"
+COL_CHANGELOG_JSON = "CHANGELOG (JSON)"
 
-def is_weekend(d: date) -> bool:
-    return d.weekday() >= 5
+VERIFIED_STATUS = "Verified for Production"
+
+PERIODS_BACK_BIWEEKLY = 10
+PERIODS_BACK_MONTHLY  = 10
+PERIODS_BACK_QUARTERLY = 8
+
+OUTLIER_IQR_MULT = 2.5
+
+# Paleta de colores
+COLOR_BAR     = "#1e6fc9"
+COLOR_OUTLIER = "#e84c30"
+COLOR_LINE    = "#1e6fc9"
+
+STUDIO_COLORS = [
+    "#1e6fc9", "#2da06e", "#e8a020", "#e84c30", "#8b4fc9",
+    "#26b3b3", "#c94f8b", "#6b8e23", "#a07050", "#888780",
+]
+GAME_COLORS = STUDIO_COLORS  # mismo set
 
 
-def working_days_between(start: date, end: date) -> float:
-    """Count working (Mon–Fri) days from start up to but NOT including end."""
-    if end <= start:
-        return 0.0
-    count = 0
-    cur = start
-    while cur < end:
-        if not is_weekend(cur):
-            count += 1
-        cur += timedelta(days=1)
-    return float(count)
+# ══════════════════════════════════════════════════════════════════════════════
+# Helpers de fechas
+# ══════════════════════════════════════════════════════════════════════════════
+
+def previous_month_bounds(today: date = None):
+    """Devuelve (first_day, last_day, label) del mes anterior a today."""
+    if today is None:
+        today = date.today()
+    first_of_this_month = date(today.year, today.month, 1)
+    last_of_prev = first_of_this_month - timedelta(days=1)
+    first_of_prev = date(last_of_prev.year, last_of_prev.month, 1)
+    label = last_of_prev.strftime("%B %Y")
+    return first_of_prev, last_of_prev, label
+
+
+def parse_ts(ts_str):
+    if not ts_str:
+        return None
+    s = str(ts_str).strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
 
 
 def iso_week_biweekly_label(d: date) -> str:
     """
-    Return a biweekly period label based on ISO week number.
-    Weeks are paired as (W01,W02)→'26W02', (W03,W04)→'26W04', etc.
-    Odd week n is paired with week n+1.
+    Etiqueta bisemanal basada en ISO week. Par (Wn, Wn+1) → 'YYW(n+1)'.
+    W01 va con W02 → '26W02'. Semana impar se empareja con la siguiente.
     """
     iso_year, iso_week, _ = d.isocalendar()
     paired = iso_week if iso_week % 2 == 0 else iso_week + 1
@@ -117,31 +135,16 @@ def iso_week_biweekly_label(d: date) -> str:
 
 
 def monthly_label(d: date) -> str:
-    yy = str(d.year)[-2:]
-    return f"{yy}M{d.month:02d}"
+    return f"{str(d.year)[-2:]}M{d.month:02d}"
 
 
 def quarterly_label(d: date) -> str:
-    yy = str(d.year)[-2:]
     q = (d.month - 1) // 3 + 1
-    return f"{yy}Q{q}"
+    return f"{str(d.year)[-2:]}Q{q}"
 
 
-def last_completed_month_end(ref: date) -> date:
-    """Return the last day of the month before ref's month.
-    e.g. ref=2026-02-01 → 2026-01-31
-         ref=2026-04-17 → 2026-03-31
-    """
-    return date(ref.year, ref.month, 1) - timedelta(days=1)
-
-
-def last_n_biweekly_labels(n: int, ref: date = None) -> list:
-    """Return last n distinct biweekly ISO-week labels ending at last completed month.
-    Walks back week by week from the last day of the previous month.
-    """
-    if ref is None:
-        ref = date.today()
-    anchor = last_completed_month_end(ref)
+def last_n_biweekly_labels(n: int, anchor: date) -> list:
+    """Devuelve las últimas n etiquetas bisemanales acabando en el ancla."""
     labels = []
     seen = set()
     d = anchor
@@ -154,28 +157,18 @@ def last_n_biweekly_labels(n: int, ref: date = None) -> list:
     return labels
 
 
-def last_n_monthly_labels(n: int, ref: date = None) -> list:
-    """Return last n monthly labels ending at last completed month.
-    e.g. ref=2026-04-17, n=10 → ['25M07','25M08',...,'26M03']
-    """
-    if ref is None:
-        ref = date.today()
-    # anchor = last day of previous month
-    anchor = last_completed_month_end(ref)
+def last_n_monthly_labels(n: int, anchor: date) -> list:
+    """Devuelve las últimas n etiquetas mensuales acabando en el mes del ancla."""
     labels = []
     d = date(anchor.year, anchor.month, 1)
     for _ in range(n):
         labels.insert(0, monthly_label(d))
-        d = date(d.year, d.month, 1) - timedelta(days=1)  # go to prev month
+        d = date(d.year, d.month, 1) - timedelta(days=1)
         d = date(d.year, d.month, 1)
     return labels
 
 
-def last_n_quarterly_labels(n: int, ref: date = None) -> list:
-    """Return last n quarterly labels ending at last completed quarter."""
-    if ref is None:
-        ref = date.today()
-    anchor = last_completed_month_end(ref)
+def last_n_quarterly_labels(n: int, anchor: date) -> list:
     labels = []
     seen = set()
     d = anchor
@@ -188,273 +181,211 @@ def last_n_quarterly_labels(n: int, ref: date = None) -> list:
     return labels
 
 
-# ─── Changelog parser ─────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Parse de changelog (sólo para extraer fecha Verified for Production)
+# ══════════════════════════════════════════════════════════════════════════════
 
-def parse_ts(ts_str: str) -> datetime:
-    if not ts_str:
-        return None
-    s = ts_str.strip()
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
-    try:
-        return datetime.fromisoformat(s)
-    except ValueError:
-        return None
-
-
-def parse_changelog(changelog_json: str) -> dict:
+def verified_date_from_changelog(changelog_json: str):
     """
-    Parse the Changelog (JSON) column and return:
-      devDays            – total working days spent in DEV_STATUSES
-      qaDays             – total working days spent in QA_STATUSES
-      verifiedForProdDate – date (or None) first entered 'Verified for production'
+    Primera fecha en la que el ticket entró en 'Verified for Production', o None.
+    Comparación en MAYÚSCULAS.
     """
-    result = {"devDays": 0.0, "qaDays": 0.0, "verifiedForProdDate": None}
     if not changelog_json:
-        return result
-
+        return None
     try:
         histories = json.loads(changelog_json)
     except (json.JSONDecodeError, TypeError):
-        return result
+        return None
 
-    transitions = []
+    target = VERIFIED_STATUS.upper()
+    entries = []
     for h in histories:
         ts = parse_ts(h.get("created", ""))
         if ts is None:
             continue
         for item in h.get("items", []):
             if item.get("field") == "status":
-                transitions.append({"ts": ts, "to": item.get("toString", "")})
-
-    transitions.sort(key=lambda x: x["ts"])
-
-    dev_hours = 0.0
-    qa_hours  = 0.0
-    verified_date = None
-
-    for i, tr in enumerate(transitions):
-        status = tr["to"]
-        enter  = tr["ts"]
-        exit_  = transitions[i + 1]["ts"] if i + 1 < len(transitions) else datetime.now(tz=timezone.utc)
-
-        # working hours between enter and exit
-        start_d = enter.date()
-        end_d   = exit_.date()
-        wdays   = working_days_between(start_d, end_d)
-
-        if status in DEV_STATUSES:
-            dev_hours += wdays
-        if status in QA_STATUSES:
-            qa_hours  += wdays
-
-        if status == "Verified for production" and verified_date is None:
-            verified_date = enter.date()
-
-    result["devDays"]             = dev_hours   # already in days (not hours)
-    result["qaDays"]              = qa_hours
-    result["verifiedForProdDate"] = verified_date
-    return result
+                to_status = str(item.get("toString", "") or "").upper()
+                if to_status == target:
+                    entries.append(ts)
+    if not entries:
+        return None
+    return min(entries).date()
 
 
-# ─── Outlier detection ────────────────────────────────────────────────────────
-
-def has_outlier_iqr(values: list) -> bool:
-    if len(values) < 4:
-        return False
-    s = sorted(values)
-    q1 = s[len(s) // 4]
-    q3 = s[(len(s) * 3) // 4]
-    iqr = q3 - q1
-    if iqr == 0:
-        return False
-    return s[-1] > q3 + OUTLIER_IQR_MULT * iqr or s[0] < q1 - OUTLIER_IQR_MULT * iqr
-
-
-# ─── Load component → studio/game mapping ────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Mapping componente → (studio, game)
+# ══════════════════════════════════════════════════════════════════════════════
 
 def load_mapping(mapping_path: str) -> dict:
     """
-    Returns {component_lower: {studio, game}}
-    Accepts .xlsx or .csv.
+    Lee GameStudios.csv con columnas GAME, TEAM, STUDIO.
+    Devuelve {game_name_lower: {"game": ..., "studio": ...}}.
     """
+    if not mapping_path:
+        return {}
     comp_map = {}
-    if not mapping_path or not os.path.exists(mapping_path):
-        return comp_map
-
-    if mapping_path.endswith(".csv"):
-        import csv
-        with open(mapping_path, encoding="utf-8") as f:
+    try:
+        with open(mapping_path, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            for row in reader:
-                comp = str(row.get("Component") or row.get("component") or "").strip().lower()
-                if comp:
-                    comp_map[comp] = {
-                        "studio": str(row.get("Studio") or "Other").strip(),
-                        "game":   str(row.get("Game")   or "Other").strip(),
-                    }
-    else:
-        wb = openpyxl.load_workbook(mapping_path, read_only=True, data_only=True)
-        ws = wb.active
-        headers = None
-        for row in ws.iter_rows(values_only=True):
-            if headers is None:
-                headers = [str(c).strip() if c else "" for c in row]
-                continue
-            if not any(row):
-                continue
-            rdict = dict(zip(headers, row))
-            comp = str(rdict.get("Component") or rdict.get("component") or "").strip().lower()
-            if comp:
-                comp_map[comp] = {
-                    "studio": str(rdict.get("Studio") or "Other").strip(),
-                    "game":   str(rdict.get("Game")   or "Other").strip(),
-                }
-        wb.close()
+            # Normalizar nombres de cabecera a MAYÚSCULAS
+            fieldnames_norm = {fn: fn.strip().upper() for fn in reader.fieldnames or []}
+            for raw in reader:
+                # Re-key a MAYÚSCULAS
+                row = {fieldnames_norm[k]: (v or "").strip() for k, v in raw.items() if k}
+                game = row.get("GAME", "")
+                studio = row.get("STUDIO", "")
+                if game:
+                    comp_map[game.lower()] = {"game": game, "studio": studio or "Other"}
+    except FileNotFoundError:
+        print(f"  Aviso: no se encontró {mapping_path}, todos los tickets irán a 'Other'")
+        return {}
     return comp_map
 
 
 def resolve_studio_game(components_str: str, comp_map: dict) -> tuple:
-    parts = [p.strip().lower() for p in str(components_str or "").split(",")]
-    for p in parts:
-        if p in comp_map:
-            return comp_map[p]["studio"], comp_map[p]["game"]
-        # partial match
-        for k, v in comp_map.items():
-            if p and (p in k or k in p):
-                return v["studio"], v["game"]
+    """
+    Busca en la lista de componentes del ticket cuál coincide con un juego.
+    Quita el prefijo '[Game]' si está, ignora mayúsculas.
+    Devuelve (studio, game).
+    """
+    if not components_str:
+        return "Other", "Other"
+
+    parts = [p.strip() for p in str(components_str).split(",") if p.strip()]
+    for part in parts:
+        # Quitar prefijo "[Game] " (con o sin espacio, case-insensitive)
+        cleaned = part
+        if cleaned.lower().startswith("[game]"):
+            cleaned = cleaned[len("[game]"):].strip()
+        key = cleaned.lower()
+
+        if key in comp_map:
+            entry = comp_map[key]
+            return entry["studio"], entry["game"]
+
     return "Other", "Other"
 
 
-# ─── Load XLSX ────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Lectura de tickets del xlsx
+# ══════════════════════════════════════════════════════════════════════════════
+
+def normalize_header(h):
+    return "" if h is None else str(h).strip().upper()
+
 
 def load_tickets(xlsx_path: str, comp_map: dict) -> list:
     """
-    Returns list of dicts:
-      sp, devDays, qaDays, verifiedForProdDate, studio, game
-    Only SP in {3,5,8,13} are included.
+    Devuelve lista de dicts con:
+      sp, dev_days, qa_days, verified_date, studio, game
     """
     wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
     ws = wb.active
 
-    headers = None
-    tickets = []
-    row_count = 0
+    header_row = next(ws.iter_rows(values_only=True))
+    header_idx = {normalize_header(h): i for i, h in enumerate(header_row)}
 
-    for row in ws.iter_rows(values_only=True):
-        if headers is None:
-            headers = [str(c).strip() if c is not None else "" for c in row]
-            continue
+    required = {COL_KEY, COL_STORY_POINTS, COL_COMPONENTS, COL_CHANGELOG_JSON} | DEV_COLUMNS | QA_COLUMNS
+    missing = [c for c in required if c not in header_idx]
+    if missing:
+        print(f"ERROR: faltan columnas en el xlsx: {missing}")
+        print(f"Columnas encontradas: {list(header_idx.keys())}")
+        sys.exit(1)
+
+    tickets = []
+    total = 0
+    valid_sp = 0
+    with_verified = 0
+
+    for row in ws.iter_rows(min_row=2, values_only=True):
         if not any(row):
             continue
+        total += 1
 
-        rdict = dict(zip(headers, row))
-        row_count += 1
-
-        # Story points
-        sp_raw = rdict.get("Story points") or rdict.get("story points") or rdict.get("SP")
+        sp_raw = row[header_idx[COL_STORY_POINTS]]
         try:
             sp = int(float(sp_raw))
         except (TypeError, ValueError):
             continue
         if sp not in SP_VALID:
             continue
+        valid_sp += 1
 
-        # Changelog
-        changelog_raw = (
-            rdict.get("Changelog (JSON)") or
-            rdict.get("Changelog")        or
-            rdict.get("changelog")        or ""
-        )
-        parsed = parse_changelog(str(changelog_raw) if changelog_raw else "")
-
-        # Skip tickets that have 0 dev AND 0 qa AND no verified date
-        if (parsed["devDays"] == 0 and parsed["qaDays"] == 0
-                and parsed["verifiedForProdDate"] is None):
+        cl = row[header_idx[COL_CHANGELOG_JSON]]
+        vd = verified_date_from_changelog(str(cl) if cl else "")
+        if vd is None:
             continue
+        with_verified += 1
 
-        # Studio / game
-        components = rdict.get("Components") or rdict.get("components") or ""
+        dev_hours = 0.0
+        for c in DEV_COLUMNS:
+            v = row[header_idx[c]]
+            if isinstance(v, (int, float)):
+                dev_hours += float(v)
+
+        qa_hours = 0.0
+        for c in QA_COLUMNS:
+            v = row[header_idx[c]]
+            if isinstance(v, (int, float)):
+                qa_hours += float(v)
+
+        components = row[header_idx[COL_COMPONENTS]] or ""
         studio, game = resolve_studio_game(str(components), comp_map)
 
         tickets.append({
-            "sp":                   sp,
-            "devDays":              parsed["devDays"],
-            "qaDays":               parsed["qaDays"],
-            "verifiedForProdDate":  parsed["verifiedForProdDate"],
-            "studio":               studio,
-            "game":                 game,
+            "sp":            sp,
+            "dev_days":      dev_hours / 8.0,
+            "qa_days":       qa_hours  / 8.0,
+            "verified_date": vd,
+            "studio":        studio,
+            "game":          game,
         })
 
     wb.close()
-    print(f"  Loaded {row_count} rows → {len(tickets)} valid tickets (3/5/8/13 SP)")
+    print(f"  Filas leídas                   : {total}")
+    print(f"  Con SP válido (3/5/8/13)       : {valid_sp}")
+    print(f"  Con fecha Verified for Prod    : {with_verified}")
     return tickets
 
 
-# ─── Aggregation ─────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Agregación para las páginas 4 y 5
+# ══════════════════════════════════════════════════════════════════════════════
 
-def aggregate(tickets: list, ref_date: date = None) -> dict:
-    if ref_date is None:
-        ref_date = date.today()
+def aggregate_periods(tickets: list, anchor: date) -> dict:
+    bw_labels = last_n_biweekly_labels(PERIODS_BACK_BIWEEKLY, anchor)
+    m_labels  = last_n_monthly_labels(PERIODS_BACK_MONTHLY, anchor)
+    q_labels  = last_n_quarterly_labels(PERIODS_BACK_QUARTERLY, anchor)
 
-    bw_labels = last_n_biweekly_labels(PERIODS_BACK, ref_date)
-    m_labels  = last_n_monthly_labels(PERIODS_BACK, ref_date)
-    q_labels  = last_n_quarterly_labels(8, ref_date)
-
-    bw_dev  = defaultdict(lambda: defaultdict(list))   # [sp][label] = [days]
-    m_dev   = defaultdict(lambda: defaultdict(list))
-    bw_qa   = defaultdict(lambda: defaultdict(list))
-    m_qa    = defaultdict(lambda: defaultdict(list))
-    all_dev = defaultdict(list)    # [sp] = all dev day values (for histogram)
-    all_qa  = defaultdict(list)    # [sp] = all qa day values (for histogram)
-    bw_vel  = defaultdict(float)   # [label] = sp sum
-    m_vel   = defaultdict(float)
-    st_mon  = defaultdict(lambda: defaultdict(float))  # [month][studio] = sp
-    st_qtr  = defaultdict(lambda: defaultdict(float))
-    gm_mon  = defaultdict(lambda: defaultdict(float))
-    gm_qtr  = defaultdict(lambda: defaultdict(float))
-    st_tot  = defaultdict(float)
-    gm_tot  = defaultdict(float)
+    bw_vel = defaultdict(float)
+    m_vel  = defaultdict(float)
+    st_mon = defaultdict(lambda: defaultdict(float))
+    st_qtr = defaultdict(lambda: defaultdict(float))
+    gm_mon = defaultdict(lambda: defaultdict(float))
+    gm_qtr = defaultdict(lambda: defaultdict(float))
+    st_tot = defaultdict(float)
+    gm_tot = defaultdict(float)
 
     for t in tickets:
-        sp  = t["sp"]
-        vd  = t["verifiedForProdDate"]
-        if vd is None:
-            continue
+        sp = t["sp"]
+        vd = t["verified_date"]
+        bw = iso_week_biweekly_label(vd)
+        mo = monthly_label(vd)
+        qt = quarterly_label(vd)
 
-        bw_lbl = iso_week_biweekly_label(vd)
-        mo_lbl = monthly_label(vd)
-        qt_lbl = quarterly_label(vd)
+        bw_vel[bw] += sp
+        m_vel[mo]  += sp
 
-        # Velocity (all valid SP tickets)
-        bw_vel[bw_lbl] += sp
-        m_vel[mo_lbl]  += sp
-
-        # Dev days (exclude 0)
-        if t["devDays"] > 0:
-            bw_dev[sp][bw_lbl].append(t["devDays"])
-            m_dev[sp][mo_lbl].append(t["devDays"])
-            all_dev[sp].append(t["devDays"])
-
-        # QA days (exclude 0)
-        if t["qaDays"] > 0:
-            bw_qa[sp][bw_lbl].append(t["qaDays"])
-            m_qa[sp][mo_lbl].append(t["qaDays"])
-            all_qa[sp].append(t["qaDays"])
-
-        # Effort
-        st_mon[mo_lbl][t["studio"]] += sp
-        st_qtr[qt_lbl][t["studio"]] += sp
-        gm_mon[mo_lbl][t["game"]]   += sp
-        gm_qtr[qt_lbl][t["game"]]   += sp
-        st_tot[t["studio"]]          += sp
-        gm_tot[t["game"]]            += sp
+        st_mon[mo][t["studio"]] += sp
+        st_qtr[qt][t["studio"]] += sp
+        gm_mon[mo][t["game"]]   += sp
+        gm_qtr[qt][t["game"]]   += sp
+        st_tot[t["studio"]]     += sp
+        gm_tot[t["game"]]       += sp
 
     return {
         "bw_labels": bw_labels, "m_labels": m_labels, "q_labels": q_labels,
-        "bw_dev": bw_dev, "m_dev": m_dev,
-        "bw_qa":  bw_qa,  "m_qa":  m_qa,
-        "all_dev": all_dev, "all_qa": all_qa,
         "bw_vel": bw_vel, "m_vel": m_vel,
         "st_mon": st_mon, "st_qtr": st_qtr,
         "gm_mon": gm_mon, "gm_qtr": gm_qtr,
@@ -462,203 +393,183 @@ def aggregate(tickets: list, ref_date: date = None) -> dict:
     }
 
 
-# ─── Chart builders ───────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Outliers (usado en histogramas)
+# ══════════════════════════════════════════════════════════════════════════════
 
-def _avg(lst):
-    return sum(lst) / len(lst) if lst else None
+def outlier_day_values(day_values):
+    if len(day_values) < 4:
+        return set()
+    rounded = [int(round(v)) for v in day_values]
+    s = sorted(rounded)
+    q1 = s[len(s) // 4]
+    q3 = s[(len(s) * 3) // 4]
+    iqr = q3 - q1
+    if iqr == 0:
+        return set()
+    return {x for x in set(rounded)
+            if x > q3 + OUTLIER_IQR_MULT * iqr or x < q1 - OUTLIER_IQR_MULT * iqr}
 
 
-def make_histogram_bar(days_values: list, color: str, title: str,
-                       figsize=(5, 2.6), outlier_days=None) -> str:
-    """
-    Bar chart: X = number of days (rounded integers), Y = number of tickets.
-    outlier_days: set of day values to highlight in red.
-    """
-    if not days_values:
-        fig, ax = plt.subplots(figsize=figsize)
-        fig.patch.set_facecolor("#EBF3FD")
-        ax.set_facecolor("#EBF3FD")
-        ax.set_title(title, fontsize=8, pad=4, color="#1a1917")
-        ax.text(0.5, 0.5, "No data", transform=ax.transAxes,
-                ha="center", va="center", fontsize=8, color="#a09e98")
-        path = f"/tmp/chart_{title.replace(' ','_').replace('/','_')[:40]}.png"
-        fig.savefig(path, dpi=120, bbox_inches="tight")
-        plt.close(fig)
-        return path
+# ══════════════════════════════════════════════════════════════════════════════
+# Gráficos
+# ══════════════════════════════════════════════════════════════════════════════
 
-    # Round all values to nearest integer
-    rounded = [int(round(v)) for v in days_values]
+BG = "#EBF3FD"
+GRID = "#c8d8ea"
+SPINE = "#b0c4d8"
+
+
+def _init_fig(figsize):
+    fig, ax = plt.subplots(figsize=figsize)
+    fig.patch.set_facecolor(BG)
+    ax.set_facecolor(BG)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    for s_ in ["left", "bottom"]:
+        ax.spines[s_].set_color(SPINE)
+    ax.grid(axis="y", color=GRID, linewidth=0.5, linestyle="--", zorder=0)
+    return fig, ax
+
+
+def _save_fig(fig, title):
+    safe = title.replace(" ", "_").replace("/", "_").replace("(", "").replace(")", "")[:50]
+    path = f"/tmp/chart_{safe}.png"
+    plt.tight_layout(pad=0.4)
+    fig.savefig(path, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
+def make_histogram(day_values, title, figsize=(5, 3)):
+    fig, ax = _init_fig(figsize)
+
+    if not day_values:
+        ax.text(0.5, 0.5, "Sin datos", transform=ax.transAxes,
+                ha="center", va="center", fontsize=10, color="#a09e98")
+        ax.set_title(title, fontsize=9, pad=4, color="#1a1917")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        return _save_fig(fig, title)
+
+    rounded = [int(round(v)) for v in day_values]
     counts = defaultdict(int)
     for d in rounded:
         counts[d] += 1
-
-    all_days = sorted(counts.keys())
-    # Fill gaps so bars are contiguous
-    min_d, max_d = all_days[0], all_days[-1]
-    x_vals = list(range(min_d, max_d + 1))
+    x_vals = list(range(min(rounded), max(rounded) + 1))
     y_vals = [counts.get(x, 0) for x in x_vals]
 
-    bar_colors = []
-    for x in x_vals:
-        if outlier_days and x in outlier_days:
-            bar_colors.append("#e84c30")
-        else:
-            bar_colors.append("#1e6fc9")
-
-    fig, ax = plt.subplots(figsize=figsize)
-    fig.patch.set_facecolor("#EBF3FD")
-    ax.set_facecolor("#EBF3FD")
+    outliers = outlier_day_values(day_values)
+    bar_colors = [COLOR_OUTLIER if x in outliers else COLOR_BAR for x in x_vals]
 
     ax.bar(x_vals, y_vals, color=bar_colors, width=0.7, zorder=3,
            edgecolor="white", linewidth=0.5)
-
     ax.set_xticks(x_vals)
-    ax.set_xticklabels([str(x) for x in x_vals], fontsize=7)
+    ax.set_xticklabels([str(x) for x in x_vals], fontsize=8)
     ax.yaxis.set_major_locator(mticker.MaxNLocator(integer=True))
-    ax.tick_params(axis="y", labelsize=7)
-    ax.set_title(title, fontsize=8, pad=4, color="#1a1917")
-    ax.set_xlabel("Days", fontsize=7, color="#6b6860")
-    ax.set_ylabel("Number of tickets", fontsize=7, color="#6b6860")
-    ax.grid(axis="y", color="#c8d8ea", linewidth=0.5, linestyle="--", zorder=0)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    for sp_ in ["left", "bottom"]:
-        ax.spines[sp_].set_color("#b0c4d8")
-
-    plt.tight_layout(pad=0.4)
-    path = f"/tmp/chart_{title.replace(' ','_').replace('/','_')[:40]}.png"
-    fig.savefig(path, dpi=120, bbox_inches="tight")
-    plt.close(fig)
-    return path
+    ax.tick_params(axis="y", labelsize=8)
+    ax.set_title(title, fontsize=9, pad=4, color="#1a1917")
+    ax.set_xlabel("Días laborables", fontsize=8, color="#6b6860")
+    ax.set_ylabel("Nº de tickets", fontsize=8, color="#6b6860")
+    return _save_fig(fig, title)
 
 
-def make_velocity_line(labels, values, color, title, ylabel,
-                       figsize=(5, 2.6)) -> str:
-    """Line chart for velocity trend over time periods."""
-    fig, ax = plt.subplots(figsize=figsize)
-    fig.patch.set_facecolor("#EBF3FD")
-    ax.set_facecolor("#EBF3FD")
-
+def make_line_chart(labels, values, title, ylabel, figsize=(5.5, 3), integer_y=False):
+    fig, ax = _init_fig(figsize)
     xs = range(len(labels))
     ys = [v if v is not None else float("nan") for v in values]
 
-    ax.plot(xs, ys, color=color, linewidth=1.8, marker="o",
-            markersize=4, zorder=3)
-
+    ax.plot(xs, ys, color=COLOR_LINE, linewidth=2, marker="o",
+            markersize=5, zorder=3)
     ax.set_xticks(list(xs))
-    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=7)
-    ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.0f"))
-    ax.tick_params(axis="y", labelsize=7)
-    ax.set_title(title, fontsize=8, pad=4, color="#1a1917")
-    ax.set_ylabel(ylabel, fontsize=7, color="#6b6860")
-    ax.grid(axis="y", color="#c8d8ea", linewidth=0.5, linestyle="--")
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    for sp_ in ["left", "bottom"]:
-        ax.spines[sp_].set_color("#b0c4d8")
-
-    plt.tight_layout(pad=0.4)
-    path = f"/tmp/chart_{title.replace(' ','_').replace('/','_')[:40]}.png"
-    fig.savefig(path, dpi=120, bbox_inches="tight")
-    plt.close(fig)
-    return path
+    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
+    if integer_y:
+        ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.0f"))
+    else:
+        ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.1f"))
+    ax.tick_params(axis="y", labelsize=8)
+    ax.set_title(title, fontsize=9, pad=4, color="#1a1917")
+    ax.set_ylabel(ylabel, fontsize=8, color="#6b6860")
+    return _save_fig(fig, title)
 
 
-def make_stacked_bar(labels, series_data: dict, colors_map: list,
-                     title, ylabel, figsize=(6, 2.6)) -> str:
-    fig, ax = plt.subplots(figsize=figsize)
-    fig.patch.set_facecolor("#EBF3FD")
-    ax.set_facecolor("#EBF3FD")
+def make_bar_chart(labels, values, title, ylabel, figsize=(5.5, 3), integer_y=False):
+    """Barras verticales — mismas dimensiones que make_line_chart."""
+    fig, ax = _init_fig(figsize)
+    xs = list(range(len(labels)))
+    ys = [v if v is not None else 0 for v in values]
 
+    ax.bar(xs, ys, color=COLOR_BAR, width=0.65, zorder=3,
+           edgecolor="white", linewidth=0.5)
+    ax.set_xticks(xs)
+    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
+    if integer_y:
+        ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.0f"))
+    else:
+        ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.1f"))
+    ax.tick_params(axis="y", labelsize=8)
+    ax.set_title(title, fontsize=9, pad=4, color="#1a1917")
+    ax.set_ylabel(ylabel, fontsize=8, color="#6b6860")
+    return _save_fig(fig, title)
+
+
+def make_stacked_bar(labels, series: dict, colors_list, title, ylabel, figsize=(6, 3)):
+    fig, ax = _init_fig(figsize)
     xs = list(range(len(labels)))
     bottoms = [0.0] * len(labels)
-    for i, (name, vals) in enumerate(series_data.items()):
-        color = colors_map[i % len(colors_map)]
-        ax.bar(xs, vals, bottom=bottoms, color=color, label=name, width=0.6)
+    for i, (name, vals) in enumerate(series.items()):
+        col = colors_list[i % len(colors_list)]
+        ax.bar(xs, vals, bottom=bottoms, color=col, label=name, width=0.6)
         bottoms = [b + v for b, v in zip(bottoms, vals)]
-
     ax.set_xticks(xs)
-    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=7)
-    ax.tick_params(axis="y", labelsize=7)
-    ax.set_title(title, fontsize=8, pad=4, color="#1a1917")
-    ax.set_ylabel(ylabel, fontsize=7, color="#6b6860")
-    ax.grid(axis="y", color="#c8d8ea", linewidth=0.5, linestyle="--")
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    for sp_ in ["left", "bottom"]:
-        ax.spines[sp_].set_color("#b0c4d8")
-
-    plt.tight_layout(pad=0.4)
-    path = f"/tmp/chart_{title.replace(' ','_').replace('/','_')[:40]}.png"
-    fig.savefig(path, dpi=120, bbox_inches="tight")
-    plt.close(fig)
-    return path
+    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
+    ax.tick_params(axis="y", labelsize=8)
+    ax.set_title(title, fontsize=9, pad=4, color="#1a1917")
+    ax.set_ylabel(ylabel, fontsize=8, color="#6b6860")
+    return _save_fig(fig, title)
 
 
-def make_donut(labels, values, colors_list, title, figsize=(3.5, 3.0)) -> str:
+def make_donut(labels, values, colors_list, title, figsize=(4, 3.2)):
     fig, ax = plt.subplots(figsize=figsize)
-    fig.patch.set_facecolor("#EBF3FD")
-
+    fig.patch.set_facecolor(BG)
     total = sum(values)
-    pct_labels = [f"{l}\n{v/total*100:.1f}%" if total else l
-                  for l, v in zip(labels, values)]
+    if total == 0:
+        ax.text(0.5, 0.5, "Sin datos", transform=ax.transAxes,
+                ha="center", va="center", fontsize=10, color="#a09e98")
+        ax.set_title(title, fontsize=9, pad=4, color="#1a1917")
+        ax.axis("off")
+        return _save_fig(fig, title)
 
-    wedges, texts = ax.pie(
+    pct_labels = [f"{l}  {v/total*100:.1f}%" for l, v in zip(labels, values)]
+    wedges, _ = ax.pie(
         values, labels=None, colors=colors_list[:len(values)],
-        startangle=90, wedgeprops={"width": 0.55, "edgecolor": "white", "linewidth": 0.8}
+        startangle=90,
+        wedgeprops={"width": 0.5, "edgecolor": "white", "linewidth": 0.8}
     )
-    ax.legend(wedges, pct_labels, loc="center left", bbox_to_anchor=(1, 0.5),
-              fontsize=6.5, frameon=False)
-    ax.set_title(title, fontsize=8, pad=6, color="#1a1917")
-    plt.tight_layout(pad=0.3)
-    path = f"/tmp/chart_{title.replace(' ','_').replace('/','_')[:40]}.png"
-    fig.savefig(path, dpi=120, bbox_inches="tight")
-    plt.close(fig)
-    return path
+    ax.legend(wedges, pct_labels, loc="center left",
+              bbox_to_anchor=(1, 0.5), fontsize=7, frameon=False)
+    ax.set_title(title, fontsize=9, pad=6, color="#1a1917")
+    return _save_fig(fig, title)
 
 
-# ─── PDF builder ──────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Construcción del PDF
+# ══════════════════════════════════════════════════════════════════════════════
 
-LIGHT_BLUE  = colors.HexColor("#EBF3FD")
-DARK_BLUE   = colors.HexColor("#1F4E79")
-MID_BLUE    = colors.HexColor("#185FA5")
-TEXT_DARK   = colors.HexColor("#1a1917")
-TEXT_MID    = colors.HexColor("#6b6860")
-RED_OUTLIER = colors.HexColor("#e84c30")
+DARK_BLUE = colors.HexColor("#1F4E79")
+TEXT_MID  = colors.HexColor("#6b6860")
+TEXT_DARK = colors.HexColor("#1a1917")
 
 
-def build_pdf(agg: dict, output_path: str, report_month: str):
-    styles  = getSampleStyleSheet()
-    W, H    = A4   # 595.27 x 841.89 pt
-
-    title_style = ParagraphStyle(
-        "ReportTitle", fontName="Helvetica-Bold", fontSize=22,
-        textColor=DARK_BLUE, alignment=TA_CENTER, spaceAfter=6
-    )
-    sub_style = ParagraphStyle(
-        "ReportSub", fontName="Helvetica", fontSize=11,
-        textColor=TEXT_MID, alignment=TA_CENTER, spaceAfter=4
-    )
-    section_style = ParagraphStyle(
-        "SectionHead", fontName="Helvetica-Bold", fontSize=10,
-        textColor=DARK_BLUE, spaceBefore=8, spaceAfter=4
-    )
-    note_style = ParagraphStyle(
-        "Note", fontName="Helvetica-Oblique", fontSize=7,
-        textColor=TEXT_MID, spaceAfter=2
-    )
-    outlier_style = ParagraphStyle(
-        "Outlier", fontName="Helvetica-Oblique", fontSize=7,
-        textColor=RED_OUTLIER, spaceAfter=2
-    )
-
+def build_pdf(xlsx_tickets: list, agg: dict, target_start: date, target_end: date,
+              report_month: str, output_path: str):
+    W, H = A4
     doc = BaseDocTemplate(
         output_path, pagesize=A4,
-        leftMargin=1.8*cm, rightMargin=1.8*cm,
-        topMargin=2*cm, bottomMargin=2*cm
+        leftMargin=1.8 * cm, rightMargin=1.8 * cm,
+        topMargin=2 * cm, bottomMargin=2 * cm
     )
-
-    main_frame = Frame(
+    frame = Frame(
         doc.leftMargin, doc.bottomMargin,
         W - doc.leftMargin - doc.rightMargin,
         H - doc.topMargin - doc.bottomMargin,
@@ -667,331 +578,288 @@ def build_pdf(agg: dict, output_path: str, report_month: str):
 
     def header_footer(canvas, doc):
         canvas.saveState()
-        # Header bar
         canvas.setFillColor(DARK_BLUE)
-        canvas.rect(0, H - 1.2*cm, W, 1.2*cm, fill=1, stroke=0)
+        canvas.rect(0, H - 1.2 * cm, W, 1.2 * cm, fill=1, stroke=0)
         canvas.setFont("Helvetica-Bold", 9)
         canvas.setFillColor(colors.white)
-        canvas.drawString(1.8*cm, H - 0.8*cm, "Game Server Report")
-        canvas.drawRightString(W - 1.8*cm, H - 0.8*cm, report_month)
-        # Footer
+        canvas.drawString(1.8 * cm, H - 0.8 * cm, "Game Server Report")
+        canvas.drawRightString(W - 1.8 * cm, H - 0.8 * cm, report_month)
         canvas.setFont("Helvetica", 7)
         canvas.setFillColor(TEXT_MID)
-        canvas.drawCentredString(W/2, 0.8*cm, f"Page {doc.page}")
+        canvas.drawCentredString(W / 2, 0.8 * cm, f"Página {doc.page}")
         canvas.restoreState()
 
-    doc.addPageTemplates([
-        PageTemplate(id="main", frames=[main_frame], onPage=header_footer)
-    ])
+    doc.addPageTemplates([PageTemplate(id="main", frames=[frame], onPage=header_footer)])
+
+    title_style = ParagraphStyle("title", fontName="Helvetica-Bold", fontSize=16,
+                                  textColor=DARK_BLUE, spaceAfter=6)
+    cover_title_style = ParagraphStyle("cover_title", fontName="Helvetica-Bold", fontSize=24,
+                                        textColor=DARK_BLUE, alignment=TA_CENTER, spaceAfter=8)
+    cover_sub_style = ParagraphStyle("cover_sub", fontName="Helvetica", fontSize=12,
+                                      textColor=TEXT_MID, alignment=TA_CENTER, spaceAfter=6)
+    note_style  = ParagraphStyle("note", fontName="Helvetica-Oblique", fontSize=8,
+                                  textColor=TEXT_MID, spaceAfter=10, leading=11)
+    intro_style = ParagraphStyle("intro", fontName="Helvetica", fontSize=10,
+                                  textColor=TEXT_DARK, leading=14, alignment=TA_LEFT)
 
     story = []
-    IMG_W_HALF = (W - doc.leftMargin - doc.rightMargin - 0.4*cm) / 2.0
+    IMG_W = (W - doc.leftMargin - doc.rightMargin - 0.4 * cm) / 2.0
     IMG_W_FULL = W - doc.leftMargin - doc.rightMargin
 
     def img(path, width=None):
-        width = width or IMG_W_HALF
         from PIL import Image as PILImage
+        w = width or IMG_W
         with PILImage.open(path) as im:
             iw, ih = im.size
-        height = width * ih / iw
-        return Image(path, width=width, height=height)
+        return Image(path, width=w, height=w * ih / iw)
 
-    def two_charts(left_path, right_path):
+    def grid_4(paths):
         t = Table(
-            [[img(left_path, IMG_W_HALF), img(right_path, IMG_W_HALF)]],
-            colWidths=[IMG_W_HALF + 0.2*cm, IMG_W_HALF + 0.2*cm]
+            [[img(paths[0]), img(paths[1])],
+             [img(paths[2]), img(paths[3])]],
+            colWidths=[IMG_W + 0.2 * cm, IMG_W + 0.2 * cm]
         )
-        t.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "TOP"),
-                                ("LEFTPADDING",  (0,0), (-1,-1), 0),
-                                ("RIGHTPADDING", (0,0), (-1,-1), 0)]))
+        t.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING",  (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING",   (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING",(0, 0), (-1, -1), 2),
+        ]))
         story.append(t)
 
-    # ── Cover ────────────────────────────────────────────────────────────────
-    story.append(Spacer(1, 3*cm))
-    story.append(Paragraph("Game Server Report", title_style))
-    story.append(Paragraph(f"{report_month} · Metrics", sub_style))
-    story.append(Spacer(1, 0.5*cm))
+    def two_charts(p1, p2):
+        t = Table(
+            [[img(p1), img(p2)]],
+            colWidths=[IMG_W + 0.2 * cm, IMG_W + 0.2 * cm]
+        )
+        t.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING",  (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        story.append(t)
+
+    # ── Página 1 — Portada ────────────────────────────────────────────────────
+    story.append(Spacer(1, 3 * cm))
+    story.append(Paragraph("Game Server Report", cover_title_style))
+    story.append(Paragraph(f"{report_month} · Metrics", cover_sub_style))
+    story.append(Spacer(1, 1 * cm))
     story.append(Paragraph(
-        "This report provides a comprehensive overview of key performance metrics "
-        "across the GameServer engineering teams. Pages cover: Time in Development, "
-        "Time in QA, Team Velocity, and Effort Distribution by studio and game.",
-        ParagraphStyle("Intro", fontName="Helvetica", fontSize=9,
-                       textColor=TEXT_DARK, leading=14, alignment=TA_LEFT)
+        "Este informe presenta una visión global de las métricas clave del "
+        "equipo de GameServer, permitiendo una comprensión detallada de cómo "
+        "se está avanzando con respecto a los objetivos. Se organiza en "
+        "secciones que cubren el tiempo dedicado al desarrollo, el tiempo en "
+        "QA, la velocidad del equipo y la distribución de esfuerzo entre "
+        "estudios y juegos.",
+        intro_style
+    ))
+    story.append(Spacer(1, 0.4 * cm))
+    story.append(Paragraph(
+        f"<b>Período analizado:</b> {target_start.isoformat()} → {target_end.isoformat()}",
+        intro_style
     ))
     story.append(PageBreak())
 
-    # ── Page 2: Time in Development ──────────────────────────────────────────
-    story.append(Paragraph("Time in Development", section_style))
+    # Ayuda para agregar tiempos por SP y período (para páginas 2 y 3)
+    def build_avg_by_period(metric_key: str):
+        """
+        Devuelve:
+          bw[sp][label] = promedio días (o None si sin datos)
+          m[sp][label]  = promedio días (o None)
+        Excluyendo tickets con 0 días en la métrica.
+        """
+        bw_vals = {sp: defaultdict(list) for sp in SP_VALID}
+        m_vals  = {sp: defaultdict(list) for sp in SP_VALID}
+        for t in xlsx_tickets:
+            val = t[metric_key]
+            if val <= 0:
+                continue
+            sp = t["sp"]
+            vd = t["verified_date"]
+            bw_vals[sp][iso_week_biweekly_label(vd)].append(val)
+            m_vals[sp][monthly_label(vd)].append(val)
+
+        def _avg(lst):
+            return sum(lst) / len(lst) if lst else None
+
+        bw_avg = {sp: {l: _avg(bw_vals[sp].get(l, [])) for l in agg["bw_labels"]}
+                  for sp in SP_VALID}
+        m_avg  = {sp: {l: _avg(m_vals[sp].get(l, []))  for l in agg["m_labels"]}
+                  for sp in SP_VALID}
+        return bw_avg, m_avg
+
+    # ── Página 2 — Time in Development ────────────────────────────────────────
+    story.append(Paragraph("Time in Development", title_style))
     story.append(Paragraph(
-        "Distribution of tickets by days spent in development statuses "
-        "(In Progress, Re-Opened, Code Review, Deployed on Feature branch, "
-        "In QA feature branch, Verified on feature branch). "
-        "X axis = rounded working days, Y axis = number of tickets. "
-        "Red bars indicate outlier day values (IQR × 2.5). "
-        "Left column: tickets with Verified for Production date in last 10 biweekly periods. "
-        "Right column: last 10 monthly periods.",
+        "Promedio de días laborables que los tickets pasan en desarrollo "
+        "(Re-Opened + In Progress + Code Review), agrupado por puntos de historia. "
+        f"Período del ticket determinado por la fecha de 'Verified for Production'. "
+        f"Columna izquierda: últimos {PERIODS_BACK_BIWEEKLY} períodos bisemanales. "
+        f"Columna derecha: últimos {PERIODS_BACK_MONTHLY} meses.",
         note_style
     ))
 
-    bw_labels = agg["bw_labels"]
-    m_labels  = agg["m_labels"]
-
-    def outlier_day_values(days_list):
-        """Return set of rounded day values that are outliers."""
-        if len(days_list) < 4:
-            return set()
-        rounded = [int(round(v)) for v in days_list]
-        s = sorted(rounded)
-        q1 = s[len(s) // 4]
-        q3 = s[(len(s) * 3) // 4]
-        iqr = q3 - q1
-        if iqr == 0:
-            return set()
-        return {x for x in set(rounded) if x > q3 + OUTLIER_IQR_MULT * iqr
-                or x < q1 - OUTLIER_IQR_MULT * iqr}
-
+    dev_bw, dev_m = build_avg_by_period("dev_days")
     for sp in [3, 5, 8, 13]:
-        color = SP_COLORS[sp]
-        # Collect all dev days for tickets in biweekly window
-        bw_days = []
-        for lbl in bw_labels:
-            bw_days.extend(agg["bw_dev"][sp].get(lbl, []))
-        # Collect all dev days for tickets in monthly window
-        mo_days = []
-        for lbl in m_labels:
-            mo_days.extend(agg["m_dev"][sp].get(lbl, []))
-
-        bw_out = outlier_day_values(bw_days)
-        mo_out = outlier_day_values(mo_days)
-
-        p_bw = make_histogram_bar(
-            bw_days, color,
-            f"Time in Dev – {sp} SP (last {PERIODS_BACK} biweekly periods)",
-            outlier_days=bw_out
-        )
-        p_mo = make_histogram_bar(
-            mo_days, color,
-            f"Time in Dev – {sp} SP (last {PERIODS_BACK} months)",
-            outlier_days=mo_out
-        )
-        story.append(Spacer(1, 0.15*cm))
-        story.append(Paragraph(f"{sp} SP", ParagraphStyle(
-            f"SPLabel_{sp}", fontName="Helvetica-Bold", fontSize=8,
-            textColor=colors.HexColor(color))))
-        if bw_out or mo_out:
-            all_out = bw_out | mo_out
-            story.append(Paragraph(
-                f"⚠ Outlier day values detected: {', '.join(str(d) for d in sorted(all_out))} days",
-                outlier_style))
-        two_charts(p_bw, p_mo)
-
+        bw_vals = [dev_bw[sp].get(l) for l in agg["bw_labels"]]
+        m_vals  = [dev_m[sp].get(l)  for l in agg["m_labels"]]
+        p_bw = make_bar_chart(agg["bw_labels"], bw_vals,
+                              f"Time in Dev – {sp} SP / 2 semanas",
+                              "Días laborables (media)", figsize=(4.8, 2.3))
+        p_m  = make_bar_chart(agg["m_labels"], m_vals,
+                              f"Time in Dev – {sp} SP / Mes",
+                              "Días laborables (media)", figsize=(4.8, 2.3))
+        two_charts(p_bw, p_m)
     story.append(PageBreak())
 
-    # ── Page 3: Time in QA ───────────────────────────────────────────────────
-    story.append(Paragraph("Time in QA", section_style))
+    # ── Página 3 — Time in QA ─────────────────────────────────────────────────
+    story.append(Paragraph("Time in QA", title_style))
     story.append(Paragraph(
-        "Distribution of tickets by days spent in QA statuses (Staging, In QA). "
-        "X axis = rounded working days, Y axis = number of tickets. "
-        "Red bars indicate outlier day values (IQR × 2.5).",
+        "Promedio de días laborables que los tickets pasan en QA "
+        "(Staging + In QA), agrupado por puntos de historia. "
+        f"Período del ticket determinado por la fecha de 'Verified for Production'. "
+        f"Columna izquierda: últimos {PERIODS_BACK_BIWEEKLY} períodos bisemanales. "
+        f"Columna derecha: últimos {PERIODS_BACK_MONTHLY} meses.",
         note_style
     ))
 
+    qa_bw, qa_m = build_avg_by_period("qa_days")
     for sp in [3, 5, 8, 13]:
-        color = SP_COLORS[sp]
-        bw_days = []
-        for lbl in bw_labels:
-            bw_days.extend(agg["bw_qa"][sp].get(lbl, []))
-        mo_days = []
-        for lbl in m_labels:
-            mo_days.extend(agg["m_qa"][sp].get(lbl, []))
-
-        bw_out = outlier_day_values(bw_days)
-        mo_out = outlier_day_values(mo_days)
-
-        p_bw = make_histogram_bar(
-            bw_days, color,
-            f"Time in QA – {sp} SP (last {PERIODS_BACK} biweekly periods)",
-            outlier_days=bw_out
-        )
-        p_mo = make_histogram_bar(
-            mo_days, color,
-            f"Time in QA – {sp} SP (last {PERIODS_BACK} months)",
-            outlier_days=mo_out
-        )
-        story.append(Spacer(1, 0.15*cm))
-        story.append(Paragraph(f"{sp} SP", ParagraphStyle(
-            f"SPLabelQA_{sp}", fontName="Helvetica-Bold", fontSize=8,
-            textColor=colors.HexColor(color))))
-        if bw_out or mo_out:
-            all_out = bw_out | mo_out
-            story.append(Paragraph(
-                f"⚠ Outlier day values detected: {', '.join(str(d) for d in sorted(all_out))} days",
-                outlier_style))
-        two_charts(p_bw, p_mo)
-
+        bw_vals = [qa_bw[sp].get(l) for l in agg["bw_labels"]]
+        m_vals  = [qa_m[sp].get(l)  for l in agg["m_labels"]]
+        p_bw = make_bar_chart(agg["bw_labels"], bw_vals,
+                              f"Time in QA – {sp} SP / 2 semanas",
+                              "Días laborables (media)", figsize=(4.8, 2.3))
+        p_m  = make_bar_chart(agg["m_labels"], m_vals,
+                              f"Time in QA – {sp} SP / Mes",
+                              "Días laborables (media)", figsize=(4.8, 2.3))
+        two_charts(p_bw, p_m)
     story.append(PageBreak())
 
-    # ── Page 4: Velocity ─────────────────────────────────────────────────────
-    story.append(Paragraph("Team Velocity", section_style))
+    # ── Página 4 — Team Velocity ──────────────────────────────────────────────
+    story.append(Paragraph("Team Velocity", title_style))
     story.append(Paragraph(
-        "Sum of story points from tickets reaching 'Verified for production'. "
-        "Left: biweekly (ISO week pairs). Right: monthly.",
+        "Suma de story points de los tickets que alcanzaron 'Verified for Production'. "
+        f"Últimos {PERIODS_BACK_BIWEEKLY} períodos bisemanales (izq) y "
+        f"{PERIODS_BACK_MONTHLY} meses (der). Anclado al último mes completo.",
         note_style
     ))
-
-    bw_vel_vals = [agg["bw_vel"].get(l, 0) for l in bw_labels]
-    mo_vel_vals = [agg["m_vel"].get(l, 0)  for l in m_labels]
-
-    p_bw_vel = make_velocity_line(
-        bw_labels, bw_vel_vals, PALETTE["blue"],
-        "Velocity per 2 Weeks (To Verified for Production)",
-        "Num Story Points", figsize=(5.5, 3.0)
-    )
-    p_mo_vel = make_velocity_line(
-        m_labels, mo_vel_vals, PALETTE["blue"],
-        "Velocity per Month (To Verified for Production)",
-        "Num Story Points", figsize=(5.5, 3.0)
-    )
-    two_charts(p_bw_vel, p_mo_vel)
+    bw_vel_vals = [agg["bw_vel"].get(l, 0) for l in agg["bw_labels"]]
+    mo_vel_vals = [agg["m_vel"].get(l, 0)  for l in agg["m_labels"]]
+    p_bw = make_line_chart(agg["bw_labels"], bw_vel_vals,
+                           "Velocity per 2 Weeks (To Verified for Production)",
+                           "Num Story Points", integer_y=True)
+    p_mo = make_line_chart(agg["m_labels"], mo_vel_vals,
+                           "Velocity per Month (To Verified for Production)",
+                           "Num Story Points", integer_y=True)
+    two_charts(p_bw, p_mo)
     story.append(PageBreak())
 
-    # ── Page 5: Effort Distribution ──────────────────────────────────────────
-    story.append(Paragraph("Effort Distribution", section_style))
+    # ── Página 5 — Effort Distribution ────────────────────────────────────────
+    story.append(Paragraph("Effort Distribution", title_style))
     story.append(Paragraph(
-        "Story points released per studio and per game, monthly and quarterly.",
+        "Story points liberados por estudio y por juego. "
+        f"Últimos {PERIODS_BACK_MONTHLY} meses y {PERIODS_BACK_QUARTERLY} trimestres.",
         note_style
     ))
 
     studios = sorted(agg["st_tot"], key=lambda s: -agg["st_tot"][s])
     games   = sorted(agg["gm_tot"], key=lambda g: -agg["gm_tot"][g])[:10]
-    st_colors_list = [STUDIO_COLORS[i % len(STUDIO_COLORS)] for i in range(len(studios))]
-    gm_colors_list = [GAME_COLORS[i % len(GAME_COLORS)]    for i in range(len(games))]
 
-    # Studio donut (global)
+    # Donut global por estudio
     if studios:
-        st_vals = [agg["st_tot"][s] for s in studios]
-        p_donut = make_donut(studios, st_vals, st_colors_list,
-                             "Effort per Studio (Global)", figsize=(4.5, 3.2))
-        story.append(img(p_donut, IMG_W_HALF))
+        vals = [agg["st_tot"][s] for s in studios]
+        donut_path = make_donut(studios, vals, STUDIO_COLORS,
+                                 "Effort per Studio (Global)", figsize=(5, 3))
+        story.append(img(donut_path, IMG_W_FULL * 0.65))
+        story.append(Spacer(1, 0.25 * cm))
 
-    # Studio monthly bar
-    if studios and m_labels:
-        st_mon_series = {
-            s: [agg["st_mon"].get(l, {}).get(s, 0) for l in m_labels]
-            for s in studios
-        }
-        p_st_m = make_stacked_bar(
-            m_labels, st_mon_series, st_colors_list,
-            "Effort per Studio – Monthly", "Story Points"
-        )
-        # Studio quarterly bar
-        q_labels = agg["q_labels"]
-        st_qtr_series = {
-            s: [agg["st_qtr"].get(l, {}).get(s, 0) for l in q_labels]
-            for s in studios
-        }
-        p_st_q = make_stacked_bar(
-            q_labels, st_qtr_series, st_colors_list,
-            "Effort per Studio – Quarterly", "Story Points"
-        )
-        two_charts(p_st_m, p_st_q)
+    # Estudios: mensual + trimestral
+    if studios:
+        st_mon_series = {s: [agg["st_mon"].get(l, {}).get(s, 0) for l in agg["m_labels"]]
+                         for s in studios}
+        st_qtr_series = {s: [agg["st_qtr"].get(l, {}).get(s, 0) for l in agg["q_labels"]]
+                         for s in studios}
+        p1 = make_stacked_bar(agg["m_labels"], st_mon_series, STUDIO_COLORS,
+                              "Effort per Studio – Monthly", "Story Points")
+        p2 = make_stacked_bar(agg["q_labels"], st_qtr_series, STUDIO_COLORS,
+                              "Effort per Studio – Quarterly", "Story Points")
+        two_charts(p1, p2)
+        story.append(Spacer(1, 0.15 * cm))
 
-    # Game monthly bar
-    if games and m_labels:
-        gm_mon_series = {
-            g: [agg["gm_mon"].get(l, {}).get(g, 0) for l in m_labels]
-            for g in games
-        }
-        p_gm_m = make_stacked_bar(
-            m_labels, gm_mon_series, gm_colors_list,
-            "Effort per Game – Monthly", "Story Points"
-        )
-        gm_qtr_series = {
-            g: [agg["gm_qtr"].get(l, {}).get(g, 0) for l in q_labels]
-            for g in games
-        }
-        p_gm_q = make_stacked_bar(
-            q_labels, gm_qtr_series, gm_colors_list,
-            "Effort per Game – Quarterly", "Story Points"
-        )
-        two_charts(p_gm_m, p_gm_q)
+    # Juegos: mensual + trimestral
+    if games:
+        gm_mon_series = {g: [agg["gm_mon"].get(l, {}).get(g, 0) for l in agg["m_labels"]]
+                         for g in games}
+        gm_qtr_series = {g: [agg["gm_qtr"].get(l, {}).get(g, 0) for l in agg["q_labels"]]
+                         for g in games}
+        p1 = make_stacked_bar(agg["m_labels"], gm_mon_series, GAME_COLORS,
+                              "Effort per Game – Monthly", "Story Points")
+        p2 = make_stacked_bar(agg["q_labels"], gm_qtr_series, GAME_COLORS,
+                              "Effort per Game – Quarterly", "Story Points")
+        two_charts(p1, p2)
 
     doc.build(story)
-    print(f"  PDF written → {output_path}")
+    print(f"  PDF generado → {output_path}")
 
 
-# ─── CLI ──────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# CLI
+# ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Generate CTO monthly performance report PDF from Jira XLSX export."
-    )
-    parser.add_argument(
-        "--xlsx", required=True,
-        help="Path to GS_jira_year_report.xlsx (extracted from zip)"
-    )
-    parser.add_argument(
-        "--mapping", default=None,
-        help="Path to GamesStudios mapping file (.xlsx or .csv). "
-             "Columns: Component, Studio, Game"
-    )
-    parser.add_argument(
-        "--output", default="GS_CTO_Report.pdf",
-        help="Output PDF filename (default: GS_CTO_Report.pdf)"
-    )
-    parser.add_argument(
-        "--month", default=None,
-        help="Report month label e.g. '2026-02' (default: current month)"
-    )
+    parser = argparse.ArgumentParser(description="Genera el PDF mensual de performance del CTO.")
+    parser.add_argument("--xlsx", required=True, help="Ruta al GS_jira_year_report.xlsx")
+    parser.add_argument("--mapping", default="GameStudios.csv",
+                        help="Ruta al CSV de mapeo (default: GameStudios.csv)")
+    parser.add_argument("--output", default="GS_CTO_Report.pdf", help="Nombre del PDF de salida")
+    parser.add_argument("--month", default=None,
+                        help="Mes del informe, YYYY-MM (default: mes anterior al actual)")
     args = parser.parse_args()
 
-    # Determine report month label and ref_date
-    # ref_date must be the first day of the month AFTER the report month,
-    # so that last_completed_month_end(ref_date) == last day of report month.
-    # Default (no --month): report month = last completed month (month before today)
+    # Resolver mes objetivo
     if args.month:
         try:
             dt = datetime.strptime(args.month, "%Y-%m")
-            report_month = dt.strftime("%B %Y")
-            # ref = first day of the month after the report month
+            target_start = date(dt.year, dt.month, 1)
             next_month = dt.month % 12 + 1
             next_year  = dt.year + (1 if dt.month == 12 else 0)
-            ref_date   = date(next_year, next_month, 1)
+            target_end = date(next_year, next_month, 1) - timedelta(days=1)
+            report_month = dt.strftime("%B %Y")
         except ValueError:
-            report_month = args.month
-            ref_date = date(date.today().year, date.today().month, 1)
+            print(f"ERROR: formato de --month inválido: {args.month} (usa YYYY-MM)")
+            sys.exit(1)
     else:
-        # Default: report last completed month. ref = first day of current month
-        today = date.today()
-        ref_date = date(today.year, today.month, 1)
-        report_month = last_completed_month_end(ref_date).strftime("%B %Y")
+        target_start, target_end, report_month = previous_month_bounds()
+
+    # El ancla para páginas 4/5 es el último día del mes objetivo
+    anchor = target_end
 
     print(f"\nGS CTO Report Generator")
-    print(f"  Report month : {report_month}")
-    print(f"  XLSX         : {args.xlsx}")
-    print(f"  Mapping      : {args.mapping or '(none — studios/games = Other)'}")
-    print(f"  Output       : {args.output}\n")
+    print(f"  Mes del informe : {report_month}")
+    print(f"  Rango de fechas : {target_start} → {target_end}")
+    print(f"  XLSX            : {args.xlsx}")
+    print(f"  Mapping         : {args.mapping}")
+    print(f"  PDF de salida   : {args.output}\n")
 
-    print("Loading component → studio/game mapping...")
+    print("Cargando mapping de estudios/juegos...")
     comp_map = load_mapping(args.mapping)
-    print(f"  {len(comp_map)} component mappings loaded")
+    print(f"  {len(comp_map)} mapeos cargados")
 
-    print("Loading Jira tickets...")
+    print("Cargando tickets...")
     tickets = load_tickets(args.xlsx, comp_map)
 
-    print("Aggregating metrics...")
-    agg = aggregate(tickets, ref_date)
+    print("Agregando datos por período...")
+    agg = aggregate_periods(tickets, anchor)
+    print(f"  Labels bisemanales : {agg['bw_labels']}")
+    print(f"  Labels mensuales   : {agg['m_labels']}")
+    print(f"  Labels trimestrales: {agg['q_labels']}")
 
-    # Quick summary
-    total_sp = sum(agg["m_vel"].values())
-    print(f"  Total SP verified for production (all time in dataset): {total_sp:.0f}")
-    print(f"  Biweekly periods: {agg['bw_labels']}")
-    print(f"  Monthly periods:  {agg['m_labels']}")
+    print("\nGenerando PDF...")
+    build_pdf(tickets, agg, target_start, target_end, report_month, args.output)
 
-    print("Building PDF...")
-    build_pdf(agg, args.output, report_month)
-
-    print("\nDone.")
+    print("\nListo.")
 
 
 if __name__ == "__main__":
