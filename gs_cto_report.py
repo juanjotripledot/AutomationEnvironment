@@ -60,23 +60,19 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 SP_VALID = {3, 5, 8, 13}
 
-DEV_COLUMNS = {
-    "TIME IN RE-OPENED",
-    "TIME IN IN PROGRESS",
-    "TIME IN CODE REVIEW",
-}
-
-QA_COLUMNS = {
-    "TIME IN STAGING",
-    "TIME IN IN QA",
-}
+# Status names (uppercased for comparisons)
+STATUS_IN_PROGRESS = "IN PROGRESS"
+STATUS_STAGING     = "STAGING"
+STATUS_IN_QA       = "IN QA"
 
 COL_KEY            = "KEY"
 COL_STORY_POINTS   = "STORY POINTS"
 COL_COMPONENTS     = "COMPONENTS"
 COL_CHANGELOG_JSON = "CHANGELOG (JSON)"
 
-VERIFIED_STATUS = "Verified for Production"
+# Prioridad para determinar la fecha de "finalización" del ticket (período)
+# y también como límite derecho para el cálculo de Time in QA.
+VERIFIED_STATUSES_PRIORITY = ["Verified for Production", "Production", "Done"]
 
 PERIODS_BACK_BIWEEKLY = 10
 PERIODS_BACK_MONTHLY  = 10
@@ -121,6 +117,114 @@ def parse_ts(ts_str):
         return datetime.fromisoformat(s)
     except ValueError:
         return None
+
+
+def working_days_between(start_dt: datetime, end_dt: datetime) -> float:
+    """
+    Devuelve los días laborables entre dos datetimes (solo L-V).
+    Cuenta fracciones de día. Los fines de semana (sábado/domingo) se
+    excluyen completamente.
+
+    Ejemplo: viernes 17:00 → lunes 09:00 = 16h laborables
+      (viernes 17→24 = 7h, sábado y domingo = 0h, lunes 0→9 = 9h)
+      = 16/24 = 0.667 días
+
+    En la práctica esta función opera en horas calendario ignorando fines
+    de semana y las divide entre 24. Es una aproximación razonable dado que
+    los estados en Jira pueden cambiar a cualquier hora.
+    """
+    if end_dt is None or start_dt is None:
+        return 0.0
+    if end_dt <= start_dt:
+        return 0.0
+
+    total_sec = 0.0
+    cur = start_dt
+    # Avanzar día a día y acumular segundos no-fin-de-semana
+    while cur < end_dt:
+        # Fin del día actual en la misma timezone
+        day_end = datetime(cur.year, cur.month, cur.day, tzinfo=cur.tzinfo) + timedelta(days=1)
+        segment_end = min(day_end, end_dt)
+        if cur.weekday() < 5:   # 0=Mon ... 4=Fri
+            total_sec += (segment_end - cur).total_seconds()
+        cur = segment_end
+    return total_sec / 86400.0   # segundos → días
+
+
+def parse_changelog_metrics(changelog_json: str):
+    """
+    Parsea el changelog de un ticket y devuelve un dict con:
+      - verified_date : date de "finalización" según VERIFIED_STATUSES_PRIORITY (o None)
+      - dev_days      : días laborables desde 1ª entrada a 'In Progress'
+                        hasta ÚLTIMA entrada a 'Staging' (o None)
+      - qa_days       : días laborables desde 1ª entrada a 'In QA' hasta 1ª entrada
+                        a cualquiera de VERIFIED_STATUSES_PRIORITY (o None)
+
+    Todas las comparaciones de status se hacen en MAYÚSCULAS.
+    """
+    result = {"verified_date": None, "dev_days": None, "qa_days": None}
+
+    if not changelog_json:
+        return result
+    try:
+        histories = json.loads(changelog_json)
+    except (json.JSONDecodeError, TypeError):
+        return result
+
+    # Construir lista ordenada de (ts, to_status_upper)
+    transitions = []
+    for h in histories:
+        ts = parse_ts(h.get("created", ""))
+        if ts is None:
+            continue
+        for item in h.get("items", []):
+            if item.get("field") == "status":
+                to_up = str(item.get("toString", "") or "").upper()
+                if to_up:
+                    transitions.append((ts, to_up))
+    transitions.sort(key=lambda x: x[0])
+
+    # 1ª entrada a In Progress
+    first_in_progress = next(
+        (ts for ts, s in transitions if s == STATUS_IN_PROGRESS), None)
+    # Última entrada a Staging
+    last_staging = None
+    for ts, s in transitions:
+        if s == STATUS_STAGING:
+            last_staging = ts
+    # 1ª entrada a In QA
+    first_in_qa = next(
+        (ts for ts, s in transitions if s == STATUS_IN_QA), None)
+    # 1ª entrada a cualquiera de los estados "verified" (siguiendo prioridad)
+    priority_upper = [s.upper() for s in VERIFIED_STATUSES_PRIORITY]
+    first_by_status = {}
+    for ts, s in transitions:
+        if s in priority_upper and s not in first_by_status:
+            first_by_status[s] = ts
+    verified_ts = None
+    for s in priority_upper:
+        if s in first_by_status:
+            verified_ts = first_by_status[s]
+            break
+
+    # Time in Dev = from first In Progress to last Staging
+    if first_in_progress and last_staging and last_staging > first_in_progress:
+        result["dev_days"] = working_days_between(first_in_progress, last_staging)
+
+    # Time in QA = from first In QA to first Verified (priorizado)
+    if first_in_qa and verified_ts and verified_ts > first_in_qa:
+        result["qa_days"] = working_days_between(first_in_qa, verified_ts)
+
+    # verified_date (para asignar período al ticket)
+    if verified_ts is not None:
+        result["verified_date"] = verified_ts.date()
+
+    return result
+
+
+def verified_date_from_changelog(changelog_json: str):
+    """Compat: devuelve solo la fecha de verificación."""
+    return parse_changelog_metrics(changelog_json)["verified_date"]
 
 
 def iso_week_biweekly_label(d: date) -> str:
@@ -184,34 +288,6 @@ def last_n_quarterly_labels(n: int, anchor: date) -> list:
 # ══════════════════════════════════════════════════════════════════════════════
 # Parse de changelog (sólo para extraer fecha Verified for Production)
 # ══════════════════════════════════════════════════════════════════════════════
-
-def verified_date_from_changelog(changelog_json: str):
-    """
-    Primera fecha en la que el ticket entró en 'Verified for Production', o None.
-    Comparación en MAYÚSCULAS.
-    """
-    if not changelog_json:
-        return None
-    try:
-        histories = json.loads(changelog_json)
-    except (json.JSONDecodeError, TypeError):
-        return None
-
-    target = VERIFIED_STATUS.upper()
-    entries = []
-    for h in histories:
-        ts = parse_ts(h.get("created", ""))
-        if ts is None:
-            continue
-        for item in h.get("items", []):
-            if item.get("field") == "status":
-                to_status = str(item.get("toString", "") or "").upper()
-                if to_status == target:
-                    entries.append(ts)
-    if not entries:
-        return None
-    return min(entries).date()
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Mapping componente → (studio, game)
@@ -279,6 +355,12 @@ def load_tickets(xlsx_path: str, comp_map: dict) -> list:
     """
     Devuelve lista de dicts con:
       sp, dev_days, qa_days, verified_date, studio, game
+
+    Time in Dev y Time in QA se calculan desde el CHANGELOG siguiendo las
+    definiciones del sample oficial:
+      - Time in Dev = 1ª entrada a 'In Progress' → última entrada a 'Staging'
+      - Time in QA  = 1ª entrada a 'In QA' → 1ª entrada a verified/production/done
+    Sólo días laborables (L–V) se cuentan.
     """
     wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
     ws = wb.active
@@ -286,7 +368,7 @@ def load_tickets(xlsx_path: str, comp_map: dict) -> list:
     header_row = next(ws.iter_rows(values_only=True))
     header_idx = {normalize_header(h): i for i, h in enumerate(header_row)}
 
-    required = {COL_KEY, COL_STORY_POINTS, COL_COMPONENTS, COL_CHANGELOG_JSON} | DEV_COLUMNS | QA_COLUMNS
+    required = {COL_KEY, COL_STORY_POINTS, COL_COMPONENTS, COL_CHANGELOG_JSON}
     missing = [c for c in required if c not in header_idx]
     if missing:
         print(f"ERROR: faltan columnas en el xlsx: {missing}")
@@ -297,6 +379,8 @@ def load_tickets(xlsx_path: str, comp_map: dict) -> list:
     total = 0
     valid_sp = 0
     with_verified = 0
+    with_dev = 0
+    with_qa = 0
 
     for row in ws.iter_rows(min_row=2, values_only=True):
         if not any(row):
@@ -313,30 +397,26 @@ def load_tickets(xlsx_path: str, comp_map: dict) -> list:
         valid_sp += 1
 
         cl = row[header_idx[COL_CHANGELOG_JSON]]
-        vd = verified_date_from_changelog(str(cl) if cl else "")
+        metrics = parse_changelog_metrics(str(cl) if cl else "")
+        vd = metrics["verified_date"]
         if vd is None:
             continue
         with_verified += 1
 
-        dev_hours = 0.0
-        for c in DEV_COLUMNS:
-            v = row[header_idx[c]]
-            if isinstance(v, (int, float)):
-                dev_hours += float(v)
-
-        qa_hours = 0.0
-        for c in QA_COLUMNS:
-            v = row[header_idx[c]]
-            if isinstance(v, (int, float)):
-                qa_hours += float(v)
+        dev_days = metrics["dev_days"]  # None o float
+        qa_days  = metrics["qa_days"]   # None o float
+        if dev_days is not None and dev_days > 0:
+            with_dev += 1
+        if qa_days is not None and qa_days > 0:
+            with_qa += 1
 
         components = row[header_idx[COL_COMPONENTS]] or ""
         studio, game = resolve_studio_game(str(components), comp_map)
 
         tickets.append({
             "sp":            sp,
-            "dev_days":      dev_hours / 8.0,
-            "qa_days":       qa_hours  / 8.0,
+            "dev_days":      dev_days if dev_days is not None else 0.0,
+            "qa_days":       qa_days  if qa_days  is not None else 0.0,
             "verified_date": vd,
             "studio":        studio,
             "game":          game,
@@ -345,7 +425,9 @@ def load_tickets(xlsx_path: str, comp_map: dict) -> list:
     wb.close()
     print(f"  Filas leídas                   : {total}")
     print(f"  Con SP válido (3/5/8/13)       : {valid_sp}")
-    print(f"  Con fecha Verified for Prod    : {with_verified}")
+    print(f"  Con fecha de finalización      : {with_verified}")
+    print(f"  Con Time in Dev calculable     : {with_dev}")
+    print(f"  Con Time in QA calculable      : {with_qa}")
     return tickets
 
 
@@ -863,4 +945,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
