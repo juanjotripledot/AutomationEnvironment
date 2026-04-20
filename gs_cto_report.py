@@ -948,6 +948,7 @@ def main():
     # Determine report month label and ref_date
     # ref_date must be the first day of the month AFTER the report month,
     # so that last_completed_month_end(ref_date) == last day of report month.
+    # Default (no --month): report month = last completed month (month before today)
     if args.month:
         try:
             dt = datetime.strptime(args.month, "%Y-%m")
@@ -958,9 +959,11 @@ def main():
             ref_date   = date(next_year, next_month, 1)
         except ValueError:
             report_month = args.month
-            ref_date = date.today()
+            ref_date = date(date.today().year, date.today().month, 1)
     else:
-        ref_date     = date.today()
+        # Default: report last completed month. ref = first day of current month
+        today = date.today()
+        ref_date = date(today.year, today.month, 1)
         report_month = last_completed_month_end(ref_date).strftime("%B %Y")
 
     print(f"\nGS CTO Report Generator")
