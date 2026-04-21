@@ -1,4 +1,3 @@
-
 """
 GS CTO Monthly Performance Report
 =================================
