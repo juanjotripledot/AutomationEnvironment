@@ -1,3 +1,4 @@
+
 """
 GS CTO Monthly Performance Report
 =================================
@@ -436,6 +437,11 @@ def load_tickets(xlsx_path: str, comp_map: dict) -> list:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def aggregate_periods(tickets: list, anchor: date) -> dict:
+    """
+    Agrega métricas por período.
+    IMPORTANTE: Sólo se consideran tickets cuya verified_date sea <= anchor.
+    Así se garantiza que no aparezcan datos del mes en curso (parcial).
+    """
     bw_labels = last_n_biweekly_labels(PERIODS_BACK_BIWEEKLY, anchor)
     m_labels  = last_n_monthly_labels(PERIODS_BACK_MONTHLY, anchor)
     q_labels  = last_n_quarterly_labels(PERIODS_BACK_QUARTERLY, anchor)
@@ -450,8 +456,11 @@ def aggregate_periods(tickets: list, anchor: date) -> dict:
     gm_tot = defaultdict(float)
 
     for t in tickets:
-        sp = t["sp"]
         vd = t["verified_date"]
+        # Excluir tickets del mes en curso o posteriores al anchor
+        if vd > anchor:
+            continue
+        sp = t["sp"]
         bw = iso_week_biweekly_label(vd)
         mo = monthly_label(vd)
         qt = quarterly_label(vd)
@@ -743,12 +752,14 @@ def build_pdf(xlsx_tickets: list, agg: dict, target_start: date, target_end: dat
     story.append(PageBreak())
 
     # Ayuda para agregar tiempos por SP y período (para páginas 2 y 3)
+    # Ancla: último día del mes objetivo → excluye tickets del mes en curso
+    anchor_date = target_end
     def build_avg_by_period(metric_key: str):
         """
         Devuelve:
           bw[sp][label] = promedio días (o None si sin datos)
           m[sp][label]  = promedio días (o None)
-        Excluyendo tickets con 0 días en la métrica.
+        Excluyendo tickets con 0 días en la métrica o con verified_date > anchor.
         """
         bw_vals = {sp: defaultdict(list) for sp in SP_VALID}
         m_vals  = {sp: defaultdict(list) for sp in SP_VALID}
@@ -756,8 +767,10 @@ def build_pdf(xlsx_tickets: list, agg: dict, target_start: date, target_end: dat
             val = t[metric_key]
             if val <= 0:
                 continue
-            sp = t["sp"]
             vd = t["verified_date"]
+            if vd > anchor_date:
+                continue
+            sp = t["sp"]
             bw_vals[sp][iso_week_biweekly_label(vd)].append(val)
             m_vals[sp][monthly_label(vd)].append(val)
 
