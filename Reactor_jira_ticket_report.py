@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
+ #!/usr/bin/env python3
 """
-Jira Ticket Report Generator — v5 (GitHub Actions Edition)
+Jira Ticket Report Generator — v6 (GitHub Actions Edition)
 ────────────────────────────────────────────────────────────────────────────────
 Changes vs v3:
   • Generates TWO Excel files:
@@ -747,16 +747,17 @@ def build_metrics_report_from_data(rows):
 
     # Column widths handled by Excel auto-fit
 
-    chart = BarChart()
-    chart.title = "Promedio Sub-bugs"
-    chart.y_axis.title = '# Sub-bugs'
-    data_ref = Reference(ws_bugs, min_col=2, min_row=1, max_col=len(all_points)+1, max_row=len(all_sprints)+1)
-    cat_ref = Reference(ws_bugs, min_col=1, min_row=2, max_row=len(all_sprints)+1)
-    chart.add_data(data_ref, titles_from_data=True)
-    chart.set_categories(cat_ref)
-    chart.height = 12
-    chart.width = 22
-    ws_bugs.add_chart(chart, "A" + str(len(all_sprints) + 4))
+    if all_sprints and all_points:
+        chart = BarChart()
+        chart.title = "Promedio Sub-bugs"
+        chart.y_axis.title = '# Sub-bugs'
+        data_ref = Reference(ws_bugs, min_col=2, min_row=1, max_col=len(all_points)+1, max_row=len(all_sprints)+1)
+        cat_ref = Reference(ws_bugs, min_col=1, min_row=2, max_row=len(all_sprints)+1)
+        chart.add_data(data_ref, titles_from_data=True)
+        chart.set_categories(cat_ref)
+        chart.height = 12
+        chart.width = 22
+        ws_bugs.add_chart(chart, "A" + str(len(all_sprints) + 4))
 
     # ========== Metrics Sheets ==========
     metrics_list = [
@@ -804,16 +805,17 @@ def build_metrics_report_from_data(rows):
                         cell.value = avg
                         cell.number_format = '0.00'
 
-        chart = BarChart()
-        chart.title = metric_name
-        chart.y_axis.title = 'Días'
-        data_ref = Reference(ws_m, min_col=2, min_row=1, max_col=len(all_points)+1, max_row=len(all_sprints)+1)
-        cat_ref = Reference(ws_m, min_col=1, min_row=2, max_row=len(all_sprints)+1)
-        chart.add_data(data_ref, titles_from_data=True)
-        chart.set_categories(cat_ref)
-        chart.height = 10
-        chart.width = 20
-        ws_m.add_chart(chart, "A" + str(len(all_sprints) + 4))
+        if all_sprints and all_points:
+            chart = BarChart()
+            chart.title = metric_name
+            chart.y_axis.title = 'Días'
+            data_ref = Reference(ws_m, min_col=2, min_row=1, max_col=len(all_points)+1, max_row=len(all_sprints)+1)
+            cat_ref = Reference(ws_m, min_col=1, min_row=2, max_row=len(all_sprints)+1)
+            chart.add_data(data_ref, titles_from_data=True)
+            chart.set_categories(cat_ref)
+            chart.height = 10
+            chart.width = 20
+            ws_m.add_chart(chart, "A" + str(len(all_sprints) + 4))
 
 
     # ========== Epic Lead Time Analysis ==========
@@ -922,16 +924,17 @@ def build_metrics_report_from_data(rows):
 
 
         # Chart
-        chart = BarChart()
-        chart.title = "Lead Time por Epic"
-        chart.y_axis.title = 'Días'
-        data_ref = Reference(ws_epic_matrix, min_col=2, min_row=1, max_col=len(all_epics)+1, max_row=len(all_sprints_epic)+1)
-        cat_ref = Reference(ws_epic_matrix, min_col=1, min_row=2, max_row=len(all_sprints_epic)+1)
-        chart.add_data(data_ref, titles_from_data=True)
-        chart.set_categories(cat_ref)
-        chart.height = 12
-        chart.width = 22
-        ws_epic_matrix.add_chart(chart, "A" + str(len(all_sprints_epic) + 4))
+        if all_sprints_epic and all_epics:
+            chart = BarChart()
+            chart.title = "Lead Time por Epic"
+            chart.y_axis.title = 'Días'
+            data_ref = Reference(ws_epic_matrix, min_col=2, min_row=1, max_col=len(all_epics)+1, max_row=len(all_sprints_epic)+1)
+            cat_ref = Reference(ws_epic_matrix, min_col=1, min_row=2, max_row=len(all_sprints_epic)+1)
+            chart.add_data(data_ref, titles_from_data=True)
+            chart.set_categories(cat_ref)
+            chart.height = 12
+            chart.width = 22
+            ws_epic_matrix.add_chart(chart, "A" + str(len(all_sprints_epic) + 4))
 
     # ========== Epic Summary ==========
     if epic_metrics:
@@ -1100,15 +1103,16 @@ def build_metrics_report_from_data(rows):
             summary_row += 1
 
         # Pie chart
-        pie = PieChart()
-        pie.title = f"Distribución de Caminos en QA"
-        pie_data = Reference(ws_last, min_col=2, min_row=chart_row, max_row=summary_row-1)
-        pie_labels = Reference(ws_last, min_col=1, min_row=chart_row, max_row=summary_row-1)
-        pie.add_data(pie_data)
-        pie.set_categories(pie_labels)
-        pie.height = 10
-        pie.width = 14
-        ws_last.add_chart(pie, "D3")
+        if summary_row > chart_row:
+            pie = PieChart()
+            pie.title = f"Distribución de Caminos en QA"
+            pie_data = Reference(ws_last, min_col=2, min_row=chart_row, max_row=summary_row-1)
+            pie_labels = Reference(ws_last, min_col=1, min_row=chart_row, max_row=summary_row-1)
+            pie.add_data(pie_data)
+            pie.set_categories(pie_labels)
+            pie.height = 10
+            pie.width = 14
+            ws_last.add_chart(pie, "D3")
 
 
     return wb_out
@@ -1181,17 +1185,18 @@ def build_advanced_metrics_report(wb_out, data):
         row += 1
 
     # Velocity chart
-    chart_row = row
-    chart = BarChart()
-    chart.title = "Story Points Completados por Sprint"
-    chart.y_axis.title = 'Story Points'
-    data_ref = Reference(ws_dash, min_col=2, min_row=chart_row-len(velocity_data)-1, max_row=chart_row-1)
-    cat_ref = Reference(ws_dash, min_col=1, min_row=chart_row-len(velocity_data), max_row=chart_row-1)
-    chart.add_data(data_ref, titles_from_data=True)
-    chart.set_categories(cat_ref)
-    chart.height = 12
-    chart.width = 18
-    ws_dash.add_chart(chart, "F3")
+    if velocity_data:
+        chart_row = row
+        chart = BarChart()
+        chart.title = "Story Points Completados por Sprint"
+        chart.y_axis.title = 'Story Points'
+        data_ref = Reference(ws_dash, min_col=2, min_row=chart_row-len(velocity_data)-1, max_row=chart_row-1)
+        cat_ref = Reference(ws_dash, min_col=1, min_row=chart_row-len(velocity_data), max_row=chart_row-1)
+        chart.add_data(data_ref, titles_from_data=True)
+        chart.set_categories(cat_ref)
+        chart.height = 12
+        chart.width = 18
+        ws_dash.add_chart(chart, "F3")
 
     # Throughput and completion
     row += 2
@@ -1281,17 +1286,18 @@ def build_advanced_metrics_report(wb_out, data):
             row += 1
 
     # Bottleneck chart
-    chart_row = row
-    chart = BarChart()
-    chart.title = "Tiempo Promedio por Estado (Cuello de Botella)"
-    chart.y_axis.title = 'Días'
-    data_ref = Reference(ws_bn, min_col=2, min_row=3, max_row=row-1)
-    cat_ref = Reference(ws_bn, min_col=1, min_row=4, max_row=row-1)
-    chart.add_data(data_ref, titles_from_data=True)
-    chart.set_categories(cat_ref)
-    chart.height = 12
-    chart.width = 18
-    ws_bn.add_chart(chart, "F3")
+    if bottleneck_list:
+        chart_row = row
+        chart = BarChart()
+        chart.title = "Tiempo Promedio por Estado (Cuello de Botella)"
+        chart.y_axis.title = 'Días'
+        data_ref = Reference(ws_bn, min_col=2, min_row=3, max_row=row-1)
+        cat_ref = Reference(ws_bn, min_col=1, min_row=4, max_row=row-1)
+        chart.add_data(data_ref, titles_from_data=True)
+        chart.set_categories(cat_ref)
+        chart.height = 12
+        chart.width = 18
+        ws_bn.add_chart(chart, "F3")
 
     # Time distribution pie
     row += 2
@@ -1319,15 +1325,16 @@ def build_advanced_metrics_report(wb_out, data):
             ws_bn.cell(row, 2).number_format = '0.0'
             row += 1
 
-    pie = PieChart()
-    pie.title = "% Tiempo Invertido por Estado"
-    pie_data = Reference(ws_bn, min_col=2, min_row=time_dist_row-1, max_row=row-1)
-    pie_labels = Reference(ws_bn, min_col=1, min_row=time_dist_row, max_row=row-1)
-    pie.add_data(pie_data)
-    pie.set_categories(pie_labels)
-    pie.height = 10
-    pie.width = 14
-    ws_bn.add_chart(pie, "F" + str(time_dist_row))
+    if row > time_dist_row:
+        pie = PieChart()
+        pie.title = "% Tiempo Invertido por Estado"
+        pie_data = Reference(ws_bn, min_col=2, min_row=time_dist_row-1, max_row=row-1)
+        pie_labels = Reference(ws_bn, min_col=1, min_row=time_dist_row, max_row=row-1)
+        pie.add_data(pie_data)
+        pie.set_categories(pie_labels)
+        pie.height = 10
+        pie.width = 14
+        ws_bn.add_chart(pie, "F" + str(time_dist_row))
 
 
     # ========== VARIABILITY ANALYSIS ==========
@@ -1464,16 +1471,17 @@ def build_advanced_metrics_report(wb_out, data):
         row += 1
 
     # Flow chart
-    chart = BarChart()
-    chart.title = "Tickets en Cada Estado del Pipeline"
-    chart.y_axis.title = '# Tickets'
-    data_ref = Reference(ws_flow, min_col=2, min_row=flow_row-1, max_row=row-1)
-    cat_ref = Reference(ws_flow, min_col=1, min_row=flow_row, max_row=row-1)
-    chart.add_data(data_ref, titles_from_data=True)
-    chart.set_categories(cat_ref)
-    chart.height = 10
-    chart.width = 16
-    ws_flow.add_chart(chart, "E3")
+    if row > flow_row:
+        chart = BarChart()
+        chart.title = "Tickets en Cada Estado del Pipeline"
+        chart.y_axis.title = '# Tickets'
+        data_ref = Reference(ws_flow, min_col=2, min_row=flow_row-1, max_row=row-1)
+        cat_ref = Reference(ws_flow, min_col=1, min_row=flow_row, max_row=row-1)
+        chart.add_data(data_ref, titles_from_data=True)
+        chart.set_categories(cat_ref)
+        chart.height = 10
+        chart.width = 16
+        ws_flow.add_chart(chart, "E3")
 
     # Throughput per week or sprint
     row += 2
