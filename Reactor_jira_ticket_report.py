@@ -1130,6 +1130,488 @@ def build_metrics_report_from_data(rows):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ADVANCED METRICS REPORT (Velocity, Bottlenecks, Flow, Quality)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def build_advanced_metrics_report(wb_out, data):
+    """Add advanced metrics sheets: velocity, bottlenecks, flow, quality"""
+    log.info("=== Adding Advanced Metrics ===")
+
+    h_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    h_font = Font(bold=True, color="FFFFFF")
+    bord = Border(left=Side(style='thin'), right=Side(style='thin'),
+                  top=Side(style='thin'), bottom=Side(style='thin'))
+    cent = Alignment(horizontal='center')
+
+    # Group by sprint
+    sprints_data = defaultdict(list)
+    for t in data:
+        sprints_data[t['sprint']].append(t)
+
+    all_sprints = sorted(sprints_data.keys(), key=lambda x: str(x).lower())
+
+    # ========== DASHBOARD ==========
+    ws_dash = wb_out.create_sheet("0. Dashboard", 0)
+
+    ws_dash.cell(1, 1).value = "DASHBOARD - VELOCIDAD Y PRODUCTIVIDAD"
+    ws_dash.cell(1, 1).font = Font(bold=True, size=14)
+    ws_dash.merge_cells('A1:D1')
+
+    row = 3
+
+    # Velocity (story points) per sprint
+    ws_dash.cell(row, 1).value = "VELOCITY (Story Points por Sprint)"
+    ws_dash.cell(row, 1).font = Font(bold=True, size=11)
+    row += 1
+
+    ws_dash.cell(row, 1).value = "Sprint"
+    ws_dash.cell(row, 2).value = "Story Points"
+    ws_dash.cell(row, 3).value = "# Tickets"
+    ws_dash.cell(row, 4).value = "Avg SP/Ticket"
+    for c in range(1, 5):
+        ws_dash.cell(row, c).fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+        ws_dash.cell(row, c).border = bord
+    row += 1
+
+    velocity_data = []
+    for sprint in all_sprints:
+        tickets = sprints_data[sprint]
+        total_sp = sum(t['pts'] for t in tickets if t['pts'])
+        num_tickets = len(tickets)
+        avg_sp = total_sp / num_tickets if num_tickets > 0 else 0
+
+        ws_dash.cell(row, 1).value = sprint
+        ws_dash.cell(row, 2).value = total_sp
+        ws_dash.cell(row, 3).value = num_tickets
+        ws_dash.cell(row, 4).value = round(avg_sp, 2)
+
+        for c in range(1, 5):
+            ws_dash.cell(row, c).border = bord
+            if c > 1:
+                ws_dash.cell(row, c).alignment = cent
+                if c == 4:
+                    ws_dash.cell(row, c).number_format = '0.00'
+
+        velocity_data.append({'sprint': sprint, 'sp': total_sp, 'count': num_tickets})
+        row += 1
+
+    # Velocity chart
+    chart_row = row
+    chart = BarChart()
+    chart.title = "Story Points Completados por Sprint"
+    chart.y_axis.title = 'Story Points'
+    data_ref = Reference(ws_dash, min_col=2, min_row=chart_row-len(velocity_data)-1, max_row=chart_row-1)
+    cat_ref = Reference(ws_dash, min_col=1, min_row=chart_row-len(velocity_data), max_row=chart_row-1)
+    chart.add_data(data_ref, titles_from_data=True)
+    chart.set_categories(cat_ref)
+    chart.height = 12
+    chart.width = 18
+    ws_dash.add_chart(chart, "F3")
+
+    # Throughput and completion
+    row += 2
+    ws_dash.cell(row, 1).value = "THROUGHPUT Y COMPLETITUD"
+    ws_dash.cell(row, 1).font = Font(bold=True, size=11)
+    row += 1
+
+    ws_dash.cell(row, 1).value = "Métrica"
+    ws_dash.cell(row, 2).value = "Valor"
+    for c in range(1, 3):
+        ws_dash.cell(row, c).fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    row += 1
+
+    total_sp_all = sum(t['sp'] for t in velocity_data)
+    total_tickets_all = sum(t['count'] for t in velocity_data)
+    avg_sp_all = total_sp_all / total_tickets_all if total_tickets_all > 0 else 0
+
+    metrics_summary = [
+        ("Tickets completados (total)", total_tickets_all),
+        ("Story Points completados (total)", total_sp_all),
+        ("SP promedio por ticket", round(avg_sp_all, 2)),
+        ("SP promedio por sprint", round(total_sp_all / len(velocity_data), 2) if velocity_data else 0),
+        ("Tickets promedio por sprint", round(total_tickets_all / len(velocity_data), 2) if velocity_data else 0),
+    ]
+
+    for label, val in metrics_summary:
+        ws_dash.cell(row, 1).value = label
+        ws_dash.cell(row, 2).value = val
+        ws_dash.cell(row, 1).border = bord
+        ws_dash.cell(row, 2).border = bord
+        if isinstance(val, float):
+            ws_dash.cell(row, 2).number_format = '0.00'
+        row += 1
+
+    ws_dash.column_dimensions['A'].width = 32
+    ws_dash.column_dimensions['B'].width = 18
+
+    # ========== BOTTLENECK ANALYSIS ==========
+    ws_bn = wb_out.create_sheet("12. Cuellos de Botella")
+
+    ws_bn.cell(1, 1).value = "ANÁLISIS DE CUELLOS DE BOTELLA"
+    ws_bn.cell(1, 1).font = Font(bold=True, size=14)
+    ws_bn.merge_cells('A1:D1')
+
+    row = 3
+    ws_bn.cell(row, 1).value = "Estado"
+    ws_bn.cell(row, 2).value = "Tiempo Promedio (días)"
+    ws_bn.cell(row, 3).value = "Máximo (días)"
+    ws_bn.cell(row, 4).value = "Mínimo (días)"
+    for c in range(1, 5):
+        ws_bn.cell(row, c).fill = h_fill
+        ws_bn.cell(row, c).font = h_font
+        ws_bn.cell(row, c).border = bord
+    row += 1
+
+    state_times = defaultdict(list)
+    for t in data:
+        if t['dev']:
+            state_times['Development'].append(t['dev'])
+        if t['cr']:
+            state_times['Code Review'].append(t['cr'])
+        if t['merged']:
+            state_times['Merged'].append(t['merged'])
+        if t['rqa']:
+            state_times['Ready QA'].append(t['rqa'])
+        if t['qa']:
+            state_times['QA'].append(t['qa'])
+
+    bottleneck_list = []
+    for state in ['Development', 'Code Review', 'Merged', 'Ready QA', 'QA']:
+        if state in state_times:
+            times = state_times[state]
+            avg_time = mean(times)
+            max_time = max(times)
+            min_time = min(times)
+
+            ws_bn.cell(row, 1).value = state
+            ws_bn.cell(row, 2).value = round(avg_time, 2)
+            ws_bn.cell(row, 3).value = round(max_time, 2)
+            ws_bn.cell(row, 4).value = round(min_time, 2)
+
+            for c in range(1, 5):
+                ws_bn.cell(row, c).border = bord
+                if c > 1:
+                    ws_bn.cell(row, c).alignment = cent
+                    ws_bn.cell(row, c).number_format = '0.00'
+
+            bottleneck_list.append({'state': state, 'avg': avg_time})
+            row += 1
+
+    # Bottleneck chart
+    chart_row = row
+    chart = BarChart()
+    chart.title = "Tiempo Promedio por Estado (Cuello de Botella)"
+    chart.y_axis.title = 'Días'
+    data_ref = Reference(ws_bn, min_col=2, min_row=3, max_row=row-1)
+    cat_ref = Reference(ws_bn, min_col=1, min_row=4, max_row=row-1)
+    chart.add_data(data_ref, titles_from_data=True)
+    chart.set_categories(cat_ref)
+    chart.height = 12
+    chart.width = 18
+    ws_bn.add_chart(chart, "F3")
+
+    # Time distribution pie
+    row += 2
+    ws_bn.cell(row, 1).value = "DISTRIBUCIÓN DE TIEMPO POR ESTADO"
+    ws_bn.cell(row, 1).font = Font(bold=True, size=11)
+    row += 1
+
+    ws_bn.cell(row, 1).value = "Estado"
+    ws_bn.cell(row, 2).value = "% Tiempo Total"
+    for c in range(1, 3):
+        ws_bn.cell(row, c).fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    row += 1
+
+    time_dist_row = row
+    total_time = sum(mean(times) * len(times) for times in state_times.values() if times)
+    for state in ['Development', 'Code Review', 'Merged', 'Ready QA', 'QA']:
+        if state in state_times and state_times[state]:
+            total_state_time = mean(state_times[state]) * len(state_times[state])
+            pct = (total_state_time / total_time * 100) if total_time > 0 else 0
+
+            ws_bn.cell(row, 1).value = state
+            ws_bn.cell(row, 2).value = round(pct, 1)
+            ws_bn.cell(row, 1).border = bord
+            ws_bn.cell(row, 2).border = bord
+            ws_bn.cell(row, 2).number_format = '0.0'
+            row += 1
+
+    pie = PieChart()
+    pie.title = "% Tiempo Invertido por Estado"
+    pie_data = Reference(ws_bn, min_col=2, min_row=time_dist_row-1, max_row=row-1)
+    pie_labels = Reference(ws_bn, min_col=1, min_row=time_dist_row, max_row=row-1)
+    pie.add_data(pie_data)
+    pie.set_categories(pie_labels)
+    pie.height = 10
+    pie.width = 14
+    ws_bn.add_chart(pie, "F" + str(time_dist_row))
+
+    ws_bn.column_dimensions['A'].width = 20
+    for c in range(2, 5):
+        ws_bn.column_dimensions[get_column_letter(c)].width = 18
+
+    # ========== VARIABILITY ANALYSIS ==========
+    ws_var = wb_out.create_sheet("13. Variabilidad Lead Time")
+
+    ws_var.cell(1, 1).value = "ANÁLISIS DE VARIABILIDAD Y PREDICTIBILIDAD"
+    ws_var.cell(1, 1).font = Font(bold=True, size=14)
+    ws_var.merge_cells('A1:F1')
+
+    row = 3
+
+    # Overall lead time stats
+    ws_var.cell(row, 1).value = "Lead Time General"
+    ws_var.cell(row, 1).font = Font(bold=True)
+    row += 1
+
+    ws_var.cell(row, 1).value = "Métrica"
+    ws_var.cell(row, 2).value = "Valor (días)"
+    for c in range(1, 3):
+        ws_var.cell(row, c).fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    row += 1
+
+    lead_times = [t['lead_time'] for t in data if t['lead_time']]
+    if lead_times:
+        lead_times_sorted = sorted(lead_times)
+        p95_idx = int(len(lead_times_sorted) * 0.95)
+        p50_idx = int(len(lead_times_sorted) * 0.50)
+
+        stats = [
+            ("Promedio", mean(lead_times)),
+            ("Mínimo", min(lead_times)),
+            ("Máximo", max(lead_times)),
+            ("Mediana (P50)", lead_times_sorted[p50_idx]),
+            ("Percentil 95", lead_times_sorted[p95_idx]),
+            ("Desv. Estándar", __import__('statistics').stdev(lead_times) if len(lead_times) > 1 else 0),
+        ]
+
+        for label, val in stats:
+            ws_var.cell(row, 1).value = label
+            ws_var.cell(row, 2).value = round(val, 2)
+            ws_var.cell(row, 1).border = bord
+            ws_var.cell(row, 2).border = bord
+            ws_var.cell(row, 2).number_format = '0.00'
+            row += 1
+
+    # Lead time by story points
+    row += 1
+    ws_var.cell(row, 1).value = "Lead Time por Story Points"
+    ws_var.cell(row, 1).font = Font(bold=True)
+    row += 1
+
+    ws_var.cell(row, 1).value = "Story Points"
+    ws_var.cell(row, 2).value = "Promedio"
+    ws_var.cell(row, 3).value = "Mín"
+    ws_var.cell(row, 4).value = "Máx"
+    ws_var.cell(row, 5).value = "P95"
+    ws_var.cell(row, 6).value = "# Tickets"
+    for c in range(1, 7):
+        ws_var.cell(row, c).fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    row += 1
+
+    points_data = defaultdict(list)
+    for t in data:
+        if t['lead_time']:
+            points_data[t['pts']].append(t['lead_time'])
+
+    for pts in sorted(points_data.keys()):
+        times = points_data[pts]
+        times_sorted = sorted(times)
+        p95_idx = int(len(times_sorted) * 0.95)
+
+        ws_var.cell(row, 1).value = pts
+        ws_var.cell(row, 2).value = round(mean(times), 2)
+        ws_var.cell(row, 3).value = round(min(times), 2)
+        ws_var.cell(row, 4).value = round(max(times), 2)
+        ws_var.cell(row, 5).value = round(times_sorted[p95_idx], 2)
+        ws_var.cell(row, 6).value = len(times)
+
+        for c in range(1, 7):
+            ws_var.cell(row, c).border = bord
+            if c > 1:
+                ws_var.cell(row, c).alignment = cent
+                if c != 6:
+                    ws_var.cell(row, c).number_format = '0.00'
+        row += 1
+
+    ws_var.column_dimensions['A'].width = 20
+    for c in range(2, 7):
+        ws_var.column_dimensions[get_column_letter(c)].width = 14
+
+    # ========== FLOW & WIP ANALYSIS ==========
+    ws_flow = wb_out.create_sheet("14. Flujo y Work-in-Progress")
+
+    ws_flow.cell(1, 1).value = "ANÁLISIS DE FLUJO DE TRABAJO"
+    ws_flow.cell(1, 1).font = Font(bold=True, size=14)
+    ws_flow.merge_cells('A1:C1')
+
+    row = 3
+    ws_flow.cell(row, 1).value = "Estado"
+    ws_flow.cell(row, 2).value = "# Tickets Activos"
+    ws_flow.cell(row, 3).value = "% del Total"
+    for c in range(1, 4):
+        ws_flow.cell(row, c).fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    row += 1
+
+    # Count tickets by state (using states_visited)
+    state_counts = defaultdict(int)
+    for t in data:
+        if 'In Progress' in t['states_visited']:
+            state_counts['In Progress'] += 1
+        if 'Code Review' in t['states_visited']:
+            state_counts['Code Review'] += 1
+        if 'Merged' in t['states_visited']:
+            state_counts['Merged'] += 1
+        if 'Ready for QA' in t['states_visited']:
+            state_counts['Ready for QA'] += 1
+        if 'In QA' in t['states_visited']:
+            state_counts['In QA'] += 1
+
+    total_active = len(data)
+    flow_row = row
+
+    for state in ['In Progress', 'Code Review', 'Merged', 'Ready for QA', 'In QA']:
+        count = state_counts[state]
+        pct = (count / total_active * 100) if total_active > 0 else 0
+
+        ws_flow.cell(row, 1).value = state
+        ws_flow.cell(row, 2).value = count
+        ws_flow.cell(row, 3).value = round(pct, 1)
+
+        for c in range(1, 4):
+            ws_flow.cell(row, c).border = bord
+            if c > 1:
+                ws_flow.cell(row, c).alignment = cent
+                if c == 3:
+                    ws_flow.cell(row, c).number_format = '0.0'
+        row += 1
+
+    # Flow chart
+    chart = BarChart()
+    chart.title = "Tickets en Cada Estado del Pipeline"
+    chart.y_axis.title = '# Tickets'
+    data_ref = Reference(ws_flow, min_col=2, min_row=flow_row-1, max_row=row-1)
+    cat_ref = Reference(ws_flow, min_col=1, min_row=flow_row, max_row=row-1)
+    chart.add_data(data_ref, titles_from_data=True)
+    chart.set_categories(cat_ref)
+    chart.height = 10
+    chart.width = 16
+    ws_flow.add_chart(chart, "E3")
+
+    # Throughput per week or sprint
+    row += 2
+    ws_flow.cell(row, 1).value = "THROUGHPUT POR SPRINT"
+    ws_flow.cell(row, 1).font = Font(bold=True)
+    row += 1
+
+    ws_flow.cell(row, 1).value = "Sprint"
+    ws_flow.cell(row, 2).value = "# Tickets Cerrados"
+    ws_flow.cell(row, 3).value = "Story Points"
+    for c in range(1, 4):
+        ws_flow.cell(row, c).fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    row += 1
+
+    throughput_row = row
+    for sprint in all_sprints:
+        tickets = sprints_data[sprint]
+        total_sp = sum(t['pts'] for t in tickets if t['pts'])
+
+        ws_flow.cell(row, 1).value = sprint
+        ws_flow.cell(row, 2).value = len(tickets)
+        ws_flow.cell(row, 3).value = total_sp
+
+        for c in range(1, 4):
+            ws_flow.cell(row, c).border = bord
+            if c > 1:
+                ws_flow.cell(row, c).alignment = cent
+        row += 1
+
+    ws_flow.column_dimensions['A'].width = 20
+    ws_flow.column_dimensions['B'].width = 18
+    ws_flow.column_dimensions['C'].width = 14
+
+    # ========== QUALITY ANALYSIS ==========
+    ws_qual = wb_out.create_sheet("15. Análisis de Calidad")
+
+    ws_qual.cell(1, 1).value = "ANÁLISIS DE CALIDAD Y CONFIABILIDAD"
+    ws_qual.cell(1, 1).font = Font(bold=True, size=14)
+    ws_qual.merge_cells('A1:D1')
+
+    row = 3
+
+    # Tickets with issues
+    reopened_count = 0
+    for t in data:
+        if 'Bug Fixing' in t['states_visited']:
+            reopened_count += 1
+
+    ws_qual.cell(row, 1).value = "Métrica de Calidad"
+    ws_qual.cell(row, 2).value = "Valor"
+    for c in range(1, 3):
+        ws_qual.cell(row, c).fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    row += 1
+
+    total_tickets = len(data)
+    reopening_pct = (reopened_count / total_tickets * 100) if total_tickets > 0 else 0
+
+    quality_metrics = [
+        ("Total de Tickets", total_tickets),
+        ("Tickets con Bug Fixing", reopened_count),
+        ("Reopening Rate", round(reopening_pct, 1)),
+        ("Tasa de Éxito (sin Bug Fixing)", round(100 - reopening_pct, 1)),
+    ]
+
+    for label, val in quality_metrics:
+        ws_qual.cell(row, 1).value = label
+        ws_qual.cell(row, 2).value = val
+        ws_qual.cell(row, 1).border = bord
+        ws_qual.cell(row, 2).border = bord
+        if isinstance(val, float):
+            ws_qual.cell(row, 2).number_format = '0.0'
+        row += 1
+
+    # Reopening by sprint
+    row += 1
+    ws_qual.cell(row, 1).value = "REOPENING RATE POR SPRINT"
+    ws_qual.cell(row, 1).font = Font(bold=True)
+    row += 1
+
+    ws_qual.cell(row, 1).value = "Sprint"
+    ws_qual.cell(row, 2).value = "Con Bug Fixing"
+    ws_qual.cell(row, 3).value = "Total"
+    ws_qual.cell(row, 4).value = "Reopening Rate"
+    for c in range(1, 5):
+        ws_qual.cell(row, c).fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    row += 1
+
+    reopen_row = row
+    for sprint in all_sprints:
+        tickets = sprints_data[sprint]
+        reopen_in_sprint = len([t for t in tickets if 'Bug Fixing' in t['states_visited']])
+        total_in_sprint = len(tickets)
+        reopen_rate = (reopen_in_sprint / total_in_sprint * 100) if total_in_sprint > 0 else 0
+
+        ws_qual.cell(row, 1).value = sprint
+        ws_qual.cell(row, 2).value = reopen_in_sprint
+        ws_qual.cell(row, 3).value = total_in_sprint
+        ws_qual.cell(row, 4).value = round(reopen_rate, 1)
+
+        for c in range(1, 5):
+            ws_qual.cell(row, c).border = bord
+            if c > 1:
+                ws_qual.cell(row, c).alignment = cent
+                if c == 4:
+                    ws_qual.cell(row, c).number_format = '0.0'
+        row += 1
+
+    ws_qual.column_dimensions['A'].width = 24
+    for c in range(2, 5):
+        ws_qual.column_dimensions[get_column_letter(c)].width = 16
+
+    log.info("  Advanced metrics sheets created successfully")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1181,6 +1663,82 @@ def main():
     # Write metrics report
     log.info("=== Writing Metrics Report Excel file... ===")
     wb_metrics = build_metrics_report_from_data(rows)
+
+    # Parse data for advanced metrics (same processing as metrics report)
+    data = []
+    for row in rows:
+        key = row[0]
+        pts = row[2]
+        sprint = row[13]
+        num_subtasks = row[14] or 0
+        num_subbugs = row[15] or 0
+        parent = row[10]
+
+        try:
+            changelog_json = row[8]
+            changelog = json.loads(changelog_json) if changelog_json else []
+        except:
+            changelog = []
+
+        first_status_time = {}
+        all_states = set()
+
+        for change in changelog:
+            created_str = change.get('created', '')
+            for item in change.get('items', []):
+                if item.get('field') == 'status':
+                    to_status_str = item.get('toString')
+                    all_states.add(to_status_str)
+                    if to_status_str and to_status_str not in first_status_time:
+                        try:
+                            fixed_created = created_str[:-2] + ':' + created_str[-2:]
+                            dt = datetime.fromisoformat(fixed_created)
+                            first_status_time[to_status_str] = dt
+                        except:
+                            pass
+
+        if 'In Progress' not in first_status_time or 'Done' not in first_status_time:
+            continue
+        if not pts:
+            continue
+
+        try:
+            pts_int = int(pts)
+        except:
+            continue
+
+        lead_time_days = (first_status_time['Done'] - first_status_time['In Progress']).total_seconds() / (24*3600)
+
+        def time_between(from_st, to_st):
+            if from_st in first_status_time and to_st in first_status_time:
+                dt = (first_status_time[to_st] - first_status_time[from_st]).total_seconds() / (24*3600)
+                return round(dt, 2)
+            return None
+
+        sprints = [s.strip() for s in str(sprint).split(',')] if sprint else []
+        last_sprint = sprints[-1] if sprints else sprint
+
+        total_bugs = num_subbugs + num_subtasks
+
+        ticket = {
+            'key': key,
+            'sprint': last_sprint,
+            'pts': pts_int,
+            'lead_time': round(lead_time_days, 2),
+            'dev': time_between('In Progress', 'Code Review'),
+            'cr': time_between('Code Review', 'Merged'),
+            'merged': time_between('Merged', 'Ready for QA'),
+            'rqa': time_between('Ready for QA', 'In QA'),
+            'qa': time_between('In QA', 'Done'),
+            'bugs': total_bugs,
+            'states_visited': all_states,
+        }
+        data.append(ticket)
+
+    # Add advanced metrics
+    log.info("=== Adding Advanced Metrics ===")
+    build_advanced_metrics_report(wb_metrics, data)
+
     wb_metrics.save(METRICS_REPORT_PATH)
 
     elapsed = time.time() - t0
