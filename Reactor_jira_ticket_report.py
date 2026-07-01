@@ -711,7 +711,7 @@ def build_metrics_report_from_data(rows):
     cent = Alignment(horizontal='center')
 
     # ========== Sub-bugs Analysis ==========
-    ws_bugs = wb_out.create_sheet("1. Análisis Sub-bugs", 0)
+    ws_bugs = wb_out.create_sheet("Análisis Sub-bugs", 0)
 
     ws_bugs.cell(1, 1).value = "Sprint / Pts"
     ws_bugs.cell(1, 1).fill = h_fill
@@ -762,12 +762,12 @@ def build_metrics_report_from_data(rows):
 
     # ========== Metrics Sheets ==========
     metrics_list = [
-        ('2. Lead Time', 'lead_time'),
-        ('3. Tiempo Dev', 'dev'),
-        ('4. Tiempo Code Review', 'cr'),
-        ('5. Tiempo Merged', 'merged'),
-        ('6. Tiempo Ready QA', 'rqa'),
-        ('7. Tiempo QA', 'qa'),
+        ('Lead Time', 'lead_time'),
+        ('Tiempo Dev', 'dev'),
+        ('Tiempo Code Review', 'cr'),
+        ('Tiempo Merged', 'merged'),
+        ('Tiempo Ready QA', 'rqa'),
+        ('Tiempo QA', 'qa'),
     ]
 
     for metric_name, metric_key in metrics_list:
@@ -862,7 +862,7 @@ def build_metrics_report_from_data(rows):
 
     # ========== Epic Lead Time Details Sheet ==========
     if epic_metrics:
-        ws_epic_detail = wb_out.create_sheet("8. Epic Lead Time Detail")
+        ws_epic_detail = wb_out.create_sheet("Epic Lead Time Detail")
 
         headers_epic = ['Epic', 'Sprint', 'Lead Time (días)', '# Tickets']
         for col, h in enumerate(headers_epic, 1):
@@ -895,7 +895,7 @@ def build_metrics_report_from_data(rows):
 
     # ========== Epic Lead Time Matrix (Sprint x Epic) ==========
     if epic_metrics and all_epics and all_sprints_epic:
-        ws_epic_matrix = wb_out.create_sheet("9. Epic Lead Time Matrix")
+        ws_epic_matrix = wb_out.create_sheet("Epic Lead Time Matrix")
 
         # Header
         ws_epic_matrix.cell(1, 1).value = "Sprint / Epic"
@@ -945,7 +945,7 @@ def build_metrics_report_from_data(rows):
 
     # ========== Epic Summary ==========
     if epic_metrics:
-        ws_epic_summary = wb_out.create_sheet("10. Epic Summary")
+        ws_epic_summary = wb_out.create_sheet("Epic Summary")
 
         ws_epic_summary.cell(1, 1).value = "RESUMEN DE EPICS"
         ws_epic_summary.cell(1, 1).font = Font(bold=True, size=12)
@@ -1013,7 +1013,7 @@ def build_metrics_report_from_data(rows):
 
     # ========== Last Sprint Detail ==========
     if last_sprint:
-        ws_last = wb_out.create_sheet(f"11. Detalle {last_sprint}")
+        ws_last = wb_out.create_sheet(f"Detalle {last_sprint}")
 
         last_sprint_tickets = sorted([t for t in data if t['sprint'] == last_sprint], key=lambda x: x['key'])
 
@@ -1151,7 +1151,7 @@ def build_advanced_metrics_report(wb_out, data):
     all_sprints = sorted(sprints_data.keys(), key=lambda x: str(x).lower())
 
     # ========== DASHBOARD ==========
-    ws_dash = wb_out.create_sheet("0. Dashboard", 0)
+    ws_dash = wb_out.create_sheet("Dashboard", 0)
 
     ws_dash.cell(1, 1).value = "DASHBOARD - VELOCIDAD Y PRODUCTIVIDAD"
     ws_dash.cell(1, 1).font = Font(bold=True, size=14)
@@ -1245,7 +1245,7 @@ def build_advanced_metrics_report(wb_out, data):
     ws_dash.column_dimensions['B'].width = 18
 
     # ========== BOTTLENECK ANALYSIS ==========
-    ws_bn = wb_out.create_sheet("12. Cuellos de Botella")
+    ws_bn = wb_out.create_sheet("Cuellos de Botella")
 
     ws_bn.cell(1, 1).value = "ANÁLISIS DE CUELLOS DE BOTELLA"
     ws_bn.cell(1, 1).font = Font(bold=True, size=14)
@@ -1347,11 +1347,12 @@ def build_advanced_metrics_report(wb_out, data):
     ws_bn.add_chart(pie, "F" + str(time_dist_row))
 
     ws_bn.column_dimensions['A'].width = 20
-    for c in range(2, 5):
-        ws_bn.column_dimensions[get_column_letter(c)].width = 18
+    ws_bn.column_dimensions['B'].width = 18
+    ws_bn.column_dimensions['C'].width = 18
+    ws_bn.column_dimensions['D'].width = 18
 
     # ========== VARIABILITY ANALYSIS ==========
-    ws_var = wb_out.create_sheet("13. Variabilidad Lead Time")
+    ws_var = wb_out.create_sheet("Variabilidad Lead Time")
 
     ws_var.cell(1, 1).value = "ANÁLISIS DE VARIABILIDAD Y PREDICTIBILIDAD"
     ws_var.cell(1, 1).font = Font(bold=True, size=14)
@@ -1435,11 +1436,14 @@ def build_advanced_metrics_report(wb_out, data):
         row += 1
 
     ws_var.column_dimensions['A'].width = 20
-    for c in range(2, 7):
-        ws_var.column_dimensions[get_column_letter(c)].width = 14
+    ws_var.column_dimensions['B'].width = 14
+    ws_var.column_dimensions['C'].width = 14
+    ws_var.column_dimensions['D'].width = 14
+    ws_var.column_dimensions['E'].width = 14
+    ws_var.column_dimensions['F'].width = 14
 
     # ========== FLOW & WIP ANALYSIS ==========
-    ws_flow = wb_out.create_sheet("14. Flujo y Work-in-Progress")
+    ws_flow = wb_out.create_sheet("Flujo y Work-in-Progress")
 
     ws_flow.cell(1, 1).value = "ANÁLISIS DE FLUJO DE TRABAJO"
     ws_flow.cell(1, 1).font = Font(bold=True, size=14)
@@ -1531,7 +1535,7 @@ def build_advanced_metrics_report(wb_out, data):
     ws_flow.column_dimensions['C'].width = 14
 
     # ========== QUALITY ANALYSIS ==========
-    ws_qual = wb_out.create_sheet("15. Análisis de Calidad")
+    ws_qual = wb_out.create_sheet("Análisis de Calidad")
 
     ws_qual.cell(1, 1).value = "ANÁLISIS DE CALIDAD Y CONFIABILIDAD"
     ws_qual.cell(1, 1).font = Font(bold=True, size=14)
@@ -1605,8 +1609,9 @@ def build_advanced_metrics_report(wb_out, data):
         row += 1
 
     ws_qual.column_dimensions['A'].width = 24
-    for c in range(2, 5):
-        ws_qual.column_dimensions[get_column_letter(c)].width = 16
+    ws_qual.column_dimensions['B'].width = 16
+    ws_qual.column_dimensions['C'].width = 16
+    ws_qual.column_dimensions['D'].width = 16
 
     log.info("  Advanced metrics sheets created successfully")
 
