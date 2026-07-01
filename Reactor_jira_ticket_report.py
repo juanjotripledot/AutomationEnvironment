@@ -747,7 +747,7 @@ def build_metrics_report_from_data(rows):
 
     ws_bugs.column_dimensions['A'].width = 16
     for col in range(2, len(all_points) + 2):
-        ws_bugs.column_dimensions[chr(64+col)].width = 12
+        ws_bugs.column_dimensions[get_column_letter(col)].width = 12
 
     chart = BarChart()
     chart.title = "Promedio Sub-bugs"
@@ -818,7 +818,7 @@ def build_metrics_report_from_data(rows):
         ws_m.add_chart(chart, "A" + str(len(all_sprints) + 4))
 
         for c in range(1, len(all_points) + 2):
-            ws_m.column_dimensions[chr(64 + c)].width = 12
+            ws_m.column_dimensions[get_column_letter(c)].width = 12
 
     # ========== Epic Lead Time Analysis ==========
     log.info("  Computing epic lead times...")
@@ -929,7 +929,7 @@ def build_metrics_report_from_data(rows):
                     cell.number_format = '0.00'
 
         for col in range(1, len(all_epics) + 2):
-            ws_epic_matrix.column_dimensions[chr(64 + col)].width = 16
+            ws_epic_matrix.column_dimensions[get_column_letter(col)].width = 16
 
         # Chart
         chart = BarChart()
@@ -1124,7 +1124,7 @@ def build_metrics_report_from_data(rows):
         ws_last.add_chart(pie, "D3")
 
         for col in range(1, 3):
-            ws_last.column_dimensions[chr(64+col)].width = 28
+            ws_last.column_dimensions[get_column_letter(col)].width = 28
 
     return wb_out
 
