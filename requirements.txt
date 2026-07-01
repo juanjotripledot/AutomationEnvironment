@@ -1,3 +1,2 @@
 requests>=2.28.0
 numpy>=1.20.0
-openpyxl>=1.5.1
