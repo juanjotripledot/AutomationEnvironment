@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Jira Ticket Report Generator — v4 (GitHub Actions Edition)
+Jira Ticket Report Generator — v5 (GitHub Actions Edition)
 ────────────────────────────────────────────────────────────────────────────────
 Changes vs v3:
   • Generates TWO Excel files:
@@ -745,9 +745,7 @@ def build_metrics_report_from_data(rows):
                 cell.value = avg_bugs
                 cell.number_format = '0.00'
 
-    ws_bugs.column_dimensions['A'].width = 16
-    for col in range(2, len(all_points) + 2):
-        ws_bugs.column_dimensions[get_column_letter(col)].width = 12
+    # Column widths handled by Excel auto-fit
 
     chart = BarChart()
     chart.title = "Promedio Sub-bugs"
@@ -817,8 +815,6 @@ def build_metrics_report_from_data(rows):
         chart.width = 20
         ws_m.add_chart(chart, "A" + str(len(all_sprints) + 4))
 
-        for c in range(1, len(all_points) + 2):
-            ws_m.column_dimensions[get_column_letter(c)].width = 12
 
     # ========== Epic Lead Time Analysis ==========
     log.info("  Computing epic lead times...")
@@ -888,10 +884,6 @@ def build_metrics_report_from_data(rows):
                         ws_epic_detail.cell(r, col).number_format = '0.00'
             r += 1
 
-        ws_epic_detail.column_dimensions['A'].width = 20
-        ws_epic_detail.column_dimensions['B'].width = 16
-        ws_epic_detail.column_dimensions['C'].width = 16
-        ws_epic_detail.column_dimensions['D'].width = 12
 
     # ========== Epic Lead Time Matrix (Sprint x Epic) ==========
     if epic_metrics and all_epics and all_sprints_epic:
@@ -928,8 +920,6 @@ def build_metrics_report_from_data(rows):
                     cell.value = matching[0]['lead_time']
                     cell.number_format = '0.00'
 
-        for col in range(1, len(all_epics) + 2):
-            ws_epic_matrix.column_dimensions[get_column_letter(col)].width = 16
 
         # Chart
         chart = BarChart()
@@ -1007,9 +997,6 @@ def build_metrics_report_from_data(rows):
                 ws_epic_summary.cell(row, 3).border = bord
                 row += 1
 
-        ws_epic_summary.column_dimensions['A'].width = 28
-        ws_epic_summary.column_dimensions['B'].width = 20
-        ws_epic_summary.column_dimensions['C'].width = 12
 
     # ========== Last Sprint Detail ==========
     if last_sprint:
@@ -1123,8 +1110,6 @@ def build_metrics_report_from_data(rows):
         pie.width = 14
         ws_last.add_chart(pie, "D3")
 
-        for col in range(1, 3):
-            ws_last.column_dimensions[get_column_letter(col)].width = 28
 
     return wb_out
 
@@ -1241,8 +1226,6 @@ def build_advanced_metrics_report(wb_out, data):
             ws_dash.cell(row, 2).number_format = '0.00'
         row += 1
 
-    ws_dash.column_dimensions['A'].width = 32
-    ws_dash.column_dimensions['B'].width = 18
 
     # ========== BOTTLENECK ANALYSIS ==========
     ws_bn = wb_out.create_sheet("Cuellos de Botella")
@@ -1346,10 +1329,6 @@ def build_advanced_metrics_report(wb_out, data):
     pie.width = 14
     ws_bn.add_chart(pie, "F" + str(time_dist_row))
 
-    ws_bn.column_dimensions['A'].width = 20
-    ws_bn.column_dimensions['B'].width = 18
-    ws_bn.column_dimensions['C'].width = 18
-    ws_bn.column_dimensions['D'].width = 18
 
     # ========== VARIABILITY ANALYSIS ==========
     ws_var = wb_out.create_sheet("Variabilidad Lead Time")
@@ -1435,12 +1414,6 @@ def build_advanced_metrics_report(wb_out, data):
                     ws_var.cell(row, c).number_format = '0.00'
         row += 1
 
-    ws_var.column_dimensions['A'].width = 20
-    ws_var.column_dimensions['B'].width = 14
-    ws_var.column_dimensions['C'].width = 14
-    ws_var.column_dimensions['D'].width = 14
-    ws_var.column_dimensions['E'].width = 14
-    ws_var.column_dimensions['F'].width = 14
 
     # ========== FLOW & WIP ANALYSIS ==========
     ws_flow = wb_out.create_sheet("Flujo y Work-in-Progress")
@@ -1530,9 +1503,6 @@ def build_advanced_metrics_report(wb_out, data):
                 ws_flow.cell(row, c).alignment = cent
         row += 1
 
-    ws_flow.column_dimensions['A'].width = 20
-    ws_flow.column_dimensions['B'].width = 18
-    ws_flow.column_dimensions['C'].width = 14
 
     # ========== QUALITY ANALYSIS ==========
     ws_qual = wb_out.create_sheet("Análisis de Calidad")
@@ -1608,10 +1578,6 @@ def build_advanced_metrics_report(wb_out, data):
                     ws_qual.cell(row, c).number_format = '0.0'
         row += 1
 
-    ws_qual.column_dimensions['A'].width = 24
-    ws_qual.column_dimensions['B'].width = 16
-    ws_qual.column_dimensions['C'].width = 16
-    ws_qual.column_dimensions['D'].width = 16
 
     log.info("  Advanced metrics sheets created successfully")
 
