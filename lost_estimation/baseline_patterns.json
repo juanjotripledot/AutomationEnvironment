@@ -1,0 +1,307 @@
+{
+  "as_of": "2026-05-19",
+  "window": "2025-05-19_to_2026-05-19",
+  "n_total": 306,
+  "n_usable": 250,
+  "per_sp": {
+    "1": {
+      "sample_size": 3,
+      "median_business_days": 1,
+      "mean_p90_capped": 1.53,
+      "p90": 2.6,
+      "mode": 1,
+      "min": 1,
+      "max": 3,
+      "extrapolated": false
+    },
+    "3": {
+      "sample_size": 81,
+      "median_business_days": 2,
+      "mean_p90_capped": 3.83,
+      "p90": 10.0,
+      "mode": 2,
+      "min": 1,
+      "max": 43,
+      "extrapolated": false
+    },
+    "5": {
+      "sample_size": 93,
+      "median_business_days": 4,
+      "mean_p90_capped": 5.38,
+      "p90": 11.0,
+      "mode": 3,
+      "min": 1,
+      "max": 189,
+      "extrapolated": false
+    },
+    "8": {
+      "sample_size": 60,
+      "median_business_days": 9.0,
+      "mean_p90_capped": 9.91,
+      "p90": 18.1,
+      "mode": 5,
+      "min": 2,
+      "max": 41,
+      "extrapolated": false
+    },
+    "13": {
+      "sample_size": 8,
+      "median_business_days": 11.5,
+      "mean_p90_capped": 10.97,
+      "p90": 17.8,
+      "mode": 6,
+      "min": 4,
+      "max": 22,
+      "extrapolated": false
+    },
+    "21": {
+      "sample_size": 0,
+      "median_business_days": 16.8,
+      "mean_p90_capped": 16.8,
+      "p90": 16.8,
+      "mode": null,
+      "min": null,
+      "max": null,
+      "extrapolated": true
+    }
+  },
+  "per_sp_per_issuetype": {
+    "Story": {
+      "1": {
+        "sample_size": 0,
+        "median_business_days": 0.8,
+        "mean_p90_capped": 0.8,
+        "p90": 0.8,
+        "mode": null,
+        "min": null,
+        "max": null,
+        "extrapolated": true
+      },
+      "3": {
+        "sample_size": 35,
+        "median_business_days": 2,
+        "mean_p90_capped": 4.24,
+        "p90": 12.6,
+        "mode": 2,
+        "min": 1,
+        "max": 34,
+        "extrapolated": false
+      },
+      "5": {
+        "sample_size": 81,
+        "median_business_days": 4,
+        "mean_p90_capped": 5.78,
+        "p90": 12.0,
+        "mode": 3,
+        "min": 1,
+        "max": 189,
+        "extrapolated": false
+      },
+      "8": {
+        "sample_size": 59,
+        "median_business_days": 9,
+        "mean_p90_capped": 9.87,
+        "p90": 18.2,
+        "mode": 5,
+        "min": 2,
+        "max": 41,
+        "extrapolated": false
+      },
+      "13": {
+        "sample_size": 8,
+        "median_business_days": 11.5,
+        "mean_p90_capped": 10.97,
+        "p90": 17.8,
+        "mode": 6,
+        "min": 4,
+        "max": 22,
+        "extrapolated": false
+      },
+      "21": {
+        "sample_size": 0,
+        "median_business_days": 16.8,
+        "mean_p90_capped": 16.8,
+        "p90": 16.8,
+        "mode": null,
+        "min": null,
+        "max": null,
+        "extrapolated": true
+      }
+    },
+    "Task": {
+      "1": {
+        "sample_size": 0,
+        "median_business_days": 0.6,
+        "mean_p90_capped": 0.6,
+        "p90": 0.6,
+        "mode": null,
+        "min": null,
+        "max": null,
+        "extrapolated": true
+      },
+      "3": {
+        "sample_size": 1,
+        "median_business_days": 2,
+        "mean_p90_capped": 2.0,
+        "p90": 2,
+        "mode": 2,
+        "min": 2,
+        "max": 2,
+        "extrapolated": false
+      },
+      "5": {
+        "sample_size": 3,
+        "median_business_days": 3,
+        "mean_p90_capped": 2.93,
+        "p90": 3.8,
+        "mode": 2,
+        "min": 2,
+        "max": 4,
+        "extrapolated": false
+      },
+      "8": {
+        "sample_size": 1,
+        "median_business_days": 13,
+        "mean_p90_capped": 13.0,
+        "p90": 13,
+        "mode": 13,
+        "min": 13,
+        "max": 13,
+        "extrapolated": false
+      },
+      "13": {
+        "sample_size": 0,
+        "median_business_days": 7.8,
+        "mean_p90_capped": 7.8,
+        "p90": 7.8,
+        "mode": null,
+        "min": null,
+        "max": null,
+        "extrapolated": true
+      },
+      "21": {
+        "sample_size": 0,
+        "median_business_days": 12.6,
+        "mean_p90_capped": 12.6,
+        "p90": 12.6,
+        "mode": null,
+        "min": null,
+        "max": null,
+        "extrapolated": true
+      }
+    },
+    "Bug": {
+      "1": {
+        "sample_size": 3,
+        "median_business_days": 1,
+        "mean_p90_capped": 1.53,
+        "p90": 2.6,
+        "mode": 1,
+        "min": 1,
+        "max": 3,
+        "extrapolated": false
+      },
+      "3": {
+        "sample_size": 45,
+        "median_business_days": 2,
+        "mean_p90_capped": 3.56,
+        "p90": 7.0,
+        "mode": 2,
+        "min": 1,
+        "max": 43,
+        "extrapolated": false
+      },
+      "5": {
+        "sample_size": 9,
+        "median_business_days": 4,
+        "mean_p90_capped": 3.38,
+        "p90": 5.4,
+        "mode": 5,
+        "min": 1,
+        "max": 7,
+        "extrapolated": false
+      },
+      "8": {
+        "sample_size": 0,
+        "median_business_days": 5.33,
+        "mean_p90_capped": 5.33,
+        "p90": 5.33,
+        "mode": null,
+        "min": null,
+        "max": null,
+        "extrapolated": true
+      },
+      "13": {
+        "sample_size": 0,
+        "median_business_days": 8.67,
+        "mean_p90_capped": 8.67,
+        "p90": 8.67,
+        "mode": null,
+        "min": null,
+        "max": null,
+        "extrapolated": true
+      },
+      "21": {
+        "sample_size": 0,
+        "median_business_days": 14.0,
+        "mean_p90_capped": 14.0,
+        "p90": 14.0,
+        "mode": null,
+        "min": null,
+        "max": null,
+        "extrapolated": true
+      }
+    }
+  },
+  "per_component_summary": [
+    {
+      "component": "Sweepstakes",
+      "n": 8,
+      "median_cycle_business_days": 2.0,
+      "modal_sp": 3
+    },
+    {
+      "component": "Admin",
+      "n": 5,
+      "median_cycle_business_days": 4,
+      "modal_sp": 3
+    }
+  ],
+  "cycle_to_sp_thresholds": [
+    {
+      "if_cycle_days_le": 1.5,
+      "then_sp": 1,
+      "anchor": "observed"
+    },
+    {
+      "if_cycle_days_le": 3.0,
+      "then_sp": 3,
+      "anchor": "observed"
+    },
+    {
+      "if_cycle_days_le": 6.5,
+      "then_sp": 5,
+      "anchor": "observed"
+    },
+    {
+      "if_cycle_days_le": 10.25,
+      "then_sp": 8,
+      "anchor": "observed"
+    },
+    {
+      "if_cycle_days_le": 14.15,
+      "then_sp": 13,
+      "anchor": "observed"
+    },
+    {
+      "if_cycle_days_le": 25.2,
+      "then_sp": 21,
+      "anchor": "extrapolated"
+    }
+  ],
+  "issue_type_adjustments": {
+    "Story": 1.2,
+    "Task": 0.6,
+    "Bug": 0.4
+  }
+}
